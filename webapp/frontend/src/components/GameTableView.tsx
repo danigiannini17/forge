@@ -1,15 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   CardViewState,
   ChatEntry,
   GameStatePayload,
-  PendingModalState,
   PlayerViewState,
+  StackItemState,
 } from '../types';
 import { CardVisual } from './CardVisual';
 import { ManaCostDisplay, ManaSymbolBadge, OracleTextDisplay } from './ManaText';
 import {
   Check,
+  Crosshair,
   Crown,
   Eye,
   FastForward,
@@ -19,11 +20,11 @@ import {
   Layers,
   MessageSquare,
   PauseCircle,
+  RefreshCw,
   RotateCcw,
   ScrollText,
   Send,
   Shield,
-  Skull,
   Sparkles,
   Sword,
   Swords,
@@ -37,23 +38,55 @@ interface GameTableViewProps {
   onLeaveRoom: () => void;
 }
 
-const PHASES: { code: string; short: string; full: string }[] = [
-  { code: 'UNTAP', short: 'STAP', full: 'Stappa (Untap)' },
-  { code: 'UPKEEP', short: 'MANT', full: 'Mantenimento (Upkeep)' },
-  { code: 'DRAW', short: 'PESC', full: 'Acquisizione (Draw)' },
-  { code: 'MAIN1', short: 'MAIN 1', full: 'Prima Fase Principale' },
-  { code: 'COMBAT_BEGIN', short: 'INIZ CMB', full: 'Inizio Combattimento' },
-  { code: 'COMBAT_DECLARE_ATTACKERS', short: 'ATTACC', full: 'Dichiarazione Attaccanti' },
-  { code: 'COMBAT_DECLARE_BLOCKERS', short: 'BLOCC', full: 'Dichiarazione Bloccanti' },
-  { code: 'COMBAT_FIRST_STRIKE_DAMAGE', short: 'ATT IMPR', full: 'Danno Attacco Improvviso' },
-  { code: 'COMBAT_DAMAGE', short: 'DANNO', full: 'Danno da Combattimento' },
-  { code: 'COMBAT_END', short: 'FINE CMB', full: 'Fine Combattimento' },
-  { code: 'MAIN2', short: 'MAIN 2', full: 'Seconda Fase Principale' },
-  { code: 'END_OF_TURN', short: 'FINE', full: 'Sottofase Finale (EOT)' },
-  { code: 'CLEANUP', short: 'CANC', full: 'Cancellazione (Cleanup)' },
+interface PhaseDef {
+  code: string;
+  short: string;
+  full: string;
+  group: 'BEGIN' | 'MAIN1' | 'COMBAT' | 'MAIN2' | 'END';
+  icon: string;
+}
+
+const PHASES: PhaseDef[] = [
+  { code: 'UNTAP', short: 'STAP', full: 'Stappa (Untap)', group: 'BEGIN', icon: '↺' },
+  { code: 'UPKEEP', short: 'MANT', full: 'Mantenimento (Upkeep)', group: 'BEGIN', icon: '🌅' },
+  { code: 'DRAW', short: 'PESC', full: 'Acquisizione (Draw)', group: 'BEGIN', icon: '🃏' },
+  { code: 'MAIN1', short: 'MAIN 1', full: 'Prima Fase Principale', group: 'MAIN1', icon: '🔮' },
+  { code: 'COMBAT_BEGIN', short: 'INIZ CMB', full: 'Inizio Combattimento', group: 'COMBAT', icon: '🎺' },
+  { code: 'COMBAT_DECLARE_ATTACKERS', short: 'ATTACC', full: 'Dichiarazione Attaccanti', group: 'COMBAT', icon: '⚔️' },
+  { code: 'COMBAT_DECLARE_BLOCKERS', short: 'BLOCC', full: 'Dichiarazione Bloccanti', group: 'COMBAT', icon: '🛡️' },
+  { code: 'COMBAT_FIRST_STRIKE_DAMAGE', short: '1° DANNO', full: 'Danno Attacco Improvviso', group: 'COMBAT', icon: '⚡' },
+  { code: 'COMBAT_DAMAGE', short: 'DANNO', full: 'Danno da Combattimento', group: 'COMBAT', icon: '💥' },
+  { code: 'COMBAT_END', short: 'FINE CMB', full: 'Fine Combattimento', group: 'COMBAT', icon: '🏳️' },
+  { code: 'MAIN2', short: 'MAIN 2', full: 'Seconda Fase Principale', group: 'MAIN2', icon: '🔮' },
+  { code: 'END_OF_TURN', short: 'FINE', full: 'Sottofase Finale (EOT)', group: 'END', icon: '🌙' },
+  { code: 'CLEANUP', short: 'CANC', full: 'Cancellazione (Cleanup)', group: 'END', icon: '🧹' },
 ];
 
 type SidebarTab = 'INSPECTOR' | 'COMMANDER_INFO' | 'ZONES' | 'LOG_CHAT';
+
+interface LandStackGroup {
+  key: string;
+  representative: CardViewState;
+  cards: CardViewState[];
+  count: number;
+}
+
+interface PartitionedBattlefield {
+  creatures: CardViewState[];
+  support: CardViewState[]; // Artifacts, Enchantments, Planeswalkers, Battles
+  landGroups: LandStackGroup[];
+  attachmentsByHostId: Record<number, CardViewState[]>;
+}
+
+interface TriggerToast {
+  id: string;
+  kind: 'TRIGGER' | 'ABILITY' | 'SPELL';
+  title: string;
+  playerName: string;
+  text: string;
+  imageUrl?: string;
+  targets: string[];
+}
 
 export const GameTableView: React.FC<GameTableViewProps> = ({
   gameState,
@@ -62,12 +95,35 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
   onLeaveRoom,
 }) => {
   const [inspectedCard, setInspectedCard] = useState<CardViewState | null>(null);
+  const [showAlternateFace, setShowAlternateFace] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('INSPECTOR');
   const [zoneViewerPlayerId, setZoneViewerPlayerId] = useState<number | null>(null);
   const [zoneViewerType, setZoneViewerType] = useState<
     'graveyard' | 'exile' | 'command' | 'flashback'
   >('graveyard');
   const [chatInput, setChatInput] = useState('');
+
+  // Hovered stack item for target/source highlighting
+  const [hoveredStackKey, setHoveredStackKey] = useState<string | null>(null);
+
+  // Cinematic Phase / Turn Announcement state
+  const prevTurnRef = useRef<number>(gameState.turn);
+  const prevPhaseRef = useRef<string>(gameState.phase);
+  const prevTappedIdsRef = useRef<Set<number>>(new Set());
+  const [phaseAnnouncement, setPhaseAnnouncement] = useState<{
+    id: number;
+    title: string;
+    subtitle: string;
+    accent: 'turn-my' | 'turn-opp' | 'combat' | 'phase' | 'untap';
+  } | null>(null);
+
+  // Live Trigger & Stack Toasts
+  const prevStackKeysRef = useRef<Set<string>>(new Set());
+  const [triggerToasts, setTriggerToasts] = useState<TriggerToast[]>([]);
+
+  // Player Life Delta indicators
+  const prevLifeByPlayerRef = useRef<Record<number, number>>({});
+  const [lifeDeltas, setLifeDeltas] = useState<Record<number, number>>({});
 
   // Modal local state
   const [selectedModalIndices, setSelectedModalIndices] = useState<number[]>([]);
@@ -84,8 +140,139 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
   useEffect(() => {
     if (!inspectedCard && gameState.prompt?.card) {
       setInspectedCard(gameState.prompt.card);
+      setShowAlternateFace(false);
     }
   }, [gameState.prompt?.card]);
+
+  // Detect Turn, Phase, and Mass-Untap transitions for Cinematic Banner
+  useEffect(() => {
+    const currentTappedIds = new Set<number>();
+    gameState.players.forEach((p) => {
+      p.zones.battlefield.forEach((c) => {
+        if (c.tapped) currentTappedIds.add(c.id);
+      });
+    });
+
+    let newlyUntappedCount = 0;
+    prevTappedIdsRef.current.forEach((id) => {
+      if (!currentTappedIds.has(id)) {
+        newlyUntappedCount++;
+      }
+    });
+    prevTappedIdsRef.current = currentTappedIds;
+
+    const turnChanged = gameState.turn !== prevTurnRef.current;
+    const phaseChanged = gameState.phase !== prevPhaseRef.current;
+    prevTurnRef.current = gameState.turn;
+    prevPhaseRef.current = gameState.phase;
+
+    const phaseObj = PHASES.find((p) => p.code === gameState.phase);
+
+    if (turnChanged) {
+      setPhaseAnnouncement({
+        id: Date.now(),
+        title: `TURNO ${gameState.turn} — ${
+          gameState.isMyTurn ? 'IL TUO TURNO' : `TURNO DI ${gameState.playerTurnName.toUpperCase()}`
+        }`,
+        subtitle:
+          newlyUntappedCount > 0
+            ? `↺ ${newlyUntappedCount} permanenti stappati • ${phaseObj?.full || gameState.phaseLabel}`
+            : phaseObj?.full || gameState.phaseLabel,
+        accent: gameState.isMyTurn ? 'turn-my' : 'turn-opp',
+      });
+    } else if (newlyUntappedCount >= 2) {
+      setPhaseAnnouncement({
+        id: Date.now(),
+        title: `↺ FASE DI STAP (${newlyUntappedCount} PERMANENTI)`,
+        subtitle: `I permanenti di ${gameState.playerTurnName} si stappano`,
+        accent: 'untap',
+      });
+    } else if (
+      phaseChanged &&
+      phaseObj &&
+      ['MAIN1', 'COMBAT_BEGIN', 'COMBAT_DECLARE_ATTACKERS', 'COMBAT_DECLARE_BLOCKERS', 'COMBAT_DAMAGE', 'MAIN2', 'END_OF_TURN'].includes(
+        phaseObj.code
+      )
+    ) {
+      setPhaseAnnouncement({
+        id: Date.now(),
+        title: `${phaseObj.icon} ${phaseObj.full.toUpperCase()}`,
+        subtitle: gameState.isMyTurn
+          ? `Tuo Turno (${gameState.playerTurnName})`
+          : `Turno di ${gameState.playerTurnName}`,
+        accent: phaseObj.group === 'COMBAT' ? 'combat' : 'phase',
+      });
+    }
+  }, [gameState.turn, gameState.phase, gameState.playerTurnName, gameState.isMyTurn, gameState.players]);
+
+  useEffect(() => {
+    if (!phaseAnnouncement) return;
+    const timer = window.setTimeout(() => {
+      setPhaseAnnouncement(null);
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [phaseAnnouncement?.id]);
+
+  // Detect new Triggers / Spells / Abilities entering the Stack
+  useEffect(() => {
+    const currentKeys = new Set<string>();
+    const newToasts: TriggerToast[] = [];
+
+    gameState.stack.forEach((item) => {
+      const signature = `${item.key}_${item.sourceCard?.id ?? 0}_${item.text.slice(0, 24)}`;
+      currentKeys.add(signature);
+      if (!prevStackKeysRef.current.has(signature)) {
+        const targets: string[] = [
+          ...item.targetPlayers.map((tp) => tp.name),
+          ...item.targetCards.map((tc) => tc.name),
+        ];
+        newToasts.push({
+          id: `${signature}_${Date.now()}`,
+          kind: item.isTrigger ? 'TRIGGER' : item.ability ? 'ABILITY' : 'SPELL',
+          title: item.sourceCard?.name || (item.isTrigger ? 'Abilità Innescata' : 'Abilità'),
+          playerName: item.activatingPlayerName,
+          text: item.text,
+          imageUrl: item.sourceCard?.imageUrl,
+          targets,
+        });
+      }
+    });
+
+    prevStackKeysRef.current = currentKeys;
+
+    if (newToasts.length > 0) {
+      setTriggerToasts((prev) => [...newToasts, ...prev].slice(0, 3));
+    }
+  }, [gameState.stack]);
+
+  useEffect(() => {
+    if (triggerToasts.length === 0) return;
+    const timer = window.setTimeout(() => {
+      setTriggerToasts((prev) => prev.slice(0, prev.length - 1));
+    }, 2800);
+    return () => window.clearTimeout(timer);
+  }, [triggerToasts]);
+
+  // Track Life Deltas per player
+  useEffect(() => {
+    const newDeltas: Record<number, number> = {};
+    let changed = false;
+    gameState.players.forEach((p) => {
+      const prev = prevLifeByPlayerRef.current[p.id];
+      if (prev !== undefined && prev !== p.life) {
+        newDeltas[p.id] = p.life - prev;
+        changed = true;
+      }
+      prevLifeByPlayerRef.current[p.id] = p.life;
+    });
+    if (changed) {
+      setLifeDeltas((prev) => ({ ...prev, ...newDeltas }));
+      const timer = window.setTimeout(() => {
+        setLifeDeltas({});
+      }, 1900);
+      return () => window.clearTimeout(timer);
+    }
+  }, [gameState.players]);
 
   // Reset modal selections whenever a new modalId arrives
   useEffect(() => {
@@ -122,11 +309,12 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
 
   const handleInspectCard = (card: CardViewState) => {
     setInspectedCard(card);
-    setSidebarTab('INSPECTOR');
+    setShowAlternateFace(false);
   };
 
   const handleCardClick = (card: CardViewState, e: React.MouseEvent) => {
     setInspectedCard(card);
+    setShowAlternateFace(false);
     onSendWs({
       type: 'SELECT_CARD',
       cardId: card.id,
@@ -249,17 +437,90 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
     });
   };
 
-  // Partition a player's battlefield into Lands vs Creatures vs Other Permanents
-  const partitionBattlefield = (cards: CardViewState[]) => {
-    const creatures: CardViewState[] = [];
-    const lands: CardViewState[] = [];
-    const others: CardViewState[] = [];
+  // Compute active Stack item for highlighting source & targets on the battlefield
+  const activeStackItem: StackItemState | undefined = useMemo(() => {
+    if (hoveredStackKey) {
+      return gameState.stack.find((s) => s.key === hoveredStackKey) || gameState.stack[0];
+    }
+    return gameState.stack[0];
+  }, [gameState.stack, hoveredStackKey]);
+
+  const stackSourceCardId = activeStackItem?.sourceCard?.id ?? -1;
+  const stackTargetCardIds = useMemo(
+    () => new Set((activeStackItem?.targetCards || []).map((tc) => tc.id)),
+    [activeStackItem]
+  );
+  const stackTargetPlayerIds = useMemo(
+    () => new Set((activeStackItem?.targetPlayers || []).map((tp) => tp.id)),
+    [activeStackItem]
+  );
+
+  /**
+   * Smart 3-Zone Tactical Battlefield Partitioner:
+   * - Tucks Auras & Equipment under their host permanent
+   * - Separates Creatures (Front Line) from Support Artifacts/Enchantments/Planeswalkers (Flank)
+   * - Stacks identical Lands with the same tapped/actionable state into compact piles (×N)
+   */
+  const partitionBattlefield = (cards: CardViewState[]): PartitionedBattlefield => {
+    const cardIdsOnBoard = new Set(cards.map((c) => c.id));
+    const attachmentsByHostId: Record<number, CardViewState[]> = {};
+    const standaloneCards: CardViewState[] = [];
+
     cards.forEach((c) => {
-      if (c.isCreature) creatures.push(c);
-      else if (c.isLand) lands.push(c);
-      else others.push(c);
+      const hostId = c.attachedToId ?? -1;
+      if (hostId > 0 && cardIdsOnBoard.has(hostId) && !c.isCreature) {
+        if (!attachmentsByHostId[hostId]) {
+          attachmentsByHostId[hostId] = [];
+        }
+        attachmentsByHostId[hostId].push(c);
+      } else {
+        standaloneCards.push(c);
+      }
     });
-    return { creatures, others, lands };
+
+    const creatures: CardViewState[] = [];
+    const support: CardViewState[] = [];
+    const rawLands: CardViewState[] = [];
+
+    standaloneCards.forEach((c) => {
+      if (c.isCreature) {
+        creatures.push(c);
+      } else if (c.isLand) {
+        rawLands.push(c);
+      } else {
+        support.push(c);
+      }
+    });
+
+    // Group identical lands that share state (tapped, actionable, selected, counters, attachments)
+    const landGroups: LandStackGroup[] = [];
+    const groupMap = new Map<string, LandStackGroup>();
+
+    rawLands.forEach((land) => {
+      const hasAttachments = (attachmentsByHostId[land.id]?.length || 0) > 0;
+      const hasCounters = land.counters && Object.keys(land.counters).length > 0;
+      const canGroup = !hasAttachments && !hasCounters && !land.selected;
+      const groupKey = canGroup
+        ? `${land.name}__tapped:${land.tapped}__act:${land.actionableStrength || 0}`
+        : `single_${land.id}`;
+
+      const existing = groupMap.get(groupKey);
+      if (existing) {
+        existing.cards.push(land);
+        existing.count = existing.cards.length;
+      } else {
+        const grp: LandStackGroup = {
+          key: groupKey,
+          representative: land,
+          cards: [land],
+          count: 1,
+        };
+        groupMap.set(groupKey, grp);
+        landGroups.push(grp);
+      }
+    });
+
+    return { creatures, support, landGroups, attachmentsByHostId };
   };
 
   const localBf = partitionBattlefield(localPlayer?.zones.battlefield || []);
@@ -295,31 +556,40 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
             )}
           </div>
 
-          {/* Interactive Phase Strip */}
-          <div className="phase-strip" title="Clicca una fase per attivare/disattivare lo Stop automatico">
-            {PHASES.map((ph) => {
+          {/* Interactive Grouped Phase Strip */}
+          <div
+            className="phase-strip"
+            title="Clicca una fase per attivare/disattivare lo Stop automatico"
+          >
+            {PHASES.map((ph, idx) => {
               const isCurrent = gameState.phase === ph.code;
               const skippedList = gameState.isMyTurn
                 ? gameState.yieldState.skippedOwnPhases
                 : gameState.yieldState.skippedOpponentPhases;
               const isStopped = !skippedList.includes(ph.code);
+              const prevGroup = idx > 0 ? PHASES[idx - 1].group : ph.group;
+              const isNewGroup = idx > 0 && prevGroup !== ph.group;
+
               return (
-                <button
-                  key={ph.code}
-                  type="button"
-                  className={`phase-pill ${isCurrent ? 'current' : ''} ${
-                    isStopped ? 'has-stop' : 'skipped'
-                  }`}
-                  onClick={() => handleTogglePhaseStop(ph.code)}
-                  title={`${ph.full} — ${
-                    isStopped
-                      ? 'Stop Attivo (clicca per saltare automaticamente)'
-                      : 'Salto Automatico (clicca per mettere uno Stop)'
-                  }`}
-                >
-                  <span className="stop-dot" />
-                  {ph.short}
-                </button>
+                <React.Fragment key={ph.code}>
+                  {isNewGroup && <span className="phase-group-divider" />}
+                  <button
+                    type="button"
+                    className={`phase-pill phase-group-${ph.group.toLowerCase()} ${
+                      isCurrent ? 'current' : ''
+                    } ${isStopped ? 'has-stop' : 'skipped'}`}
+                    onClick={() => handleTogglePhaseStop(ph.code)}
+                    title={`${ph.full} — ${
+                      isStopped
+                        ? 'Stop Attivo (clicca per saltare automaticamente)'
+                        : 'Salto Automatico (clicca per mettere uno Stop)'
+                    }`}
+                  >
+                    <span className="stop-dot" />
+                    <span className="phase-icon-mini">{ph.icon}</span>
+                    {ph.short}
+                  </button>
+                </React.Fragment>
               );
             })}
           </div>
@@ -386,6 +656,56 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
           </div>
         </header>
 
+        {/* CINEMATIC PHASE & TURN TRANSITION FLOATING BANNER */}
+        {phaseAnnouncement && (
+          <div
+            key={phaseAnnouncement.id}
+            className={`phase-transition-banner accent-${phaseAnnouncement.accent}`}
+          >
+            <div className="phase-banner-title">{phaseAnnouncement.title}</div>
+            <div className="phase-banner-sub">{phaseAnnouncement.subtitle}</div>
+          </div>
+        )}
+
+        {/* LIVE TRIGGER & STACK TOAST OVERLAY */}
+        {triggerToasts.length > 0 && (
+          <div className="trigger-toast-container">
+            {triggerToasts.map((toast) => (
+              <div
+                key={toast.id}
+                className={`trigger-toast toast-${toast.kind.toLowerCase()}`}
+              >
+                {toast.imageUrl && (
+                  <img
+                    src={toast.imageUrl}
+                    alt={toast.title}
+                    className="trigger-toast-art"
+                  />
+                )}
+                <div className="trigger-toast-body">
+                  <div className="trigger-toast-header">
+                    <span className={`trigger-kind-tag kind-${toast.kind.toLowerCase()}`}>
+                      {toast.kind === 'TRIGGER'
+                        ? '⚡ TRIGGER INNESCATO'
+                        : toast.kind === 'ABILITY'
+                        ? '⚙️ ABILITÀ ATTIVATA'
+                        : '✨ MAGIA LANCIATA'}
+                    </span>
+                    <span className="trigger-toast-player">{toast.playerName}</span>
+                  </div>
+                  <strong className="trigger-toast-title">{toast.title}</strong>
+                  <p className="trigger-toast-text">{toast.text}</p>
+                  {toast.targets.length > 0 && (
+                    <div className="trigger-toast-targets">
+                      🎯 {toast.targets.join(', ')}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* OPPONENTS BATTLEFIELD GRID (Supports 1 to 7 Opponents in Commander!) */}
         <section
           className={`opponents-grid opponents-count-${Math.min(
@@ -395,14 +715,17 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
         >
           {opponents.map((opp) => {
             const oppBf = partitionBattlefield(opp.zones.battlefield || []);
+            const isTargetedByStack = stackTargetPlayerIds.has(opp.id);
+            const oppLifeDelta = lifeDeltas[opp.id];
+
             return (
               <div
                 key={opp.id}
                 className={`opponent-board ${
                   opp.hasPriority ? 'has-priority' : ''
                 } ${opp.hasLost ? 'player-lost' : ''} ${
-                  gameState.canSelectPlayers ? 'selectable-player' : ''
-                }`}
+                  opp.isSelectable ? 'selectable-player-highlight' : ''
+                } ${isTargetedByStack ? 'player-stack-target' : ''}`}
               >
                 {/* Opponent Header Bar */}
                 <div
@@ -414,11 +737,30 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
                     <span className="player-name-tag">
                       {opp.name} {opp.isAI ? '(IA)' : ''}
                     </span>
+                    {opp.hasPriority && (
+                      <span className="opp-priority-dot" title="Ha la priorità">
+                        ⚡ Priorità
+                      </span>
+                    )}
                     <div
                       className={`life-orb ${opp.life <= 10 ? 'critical' : ''}`}
                     >
                       <Heart size={13} /> <strong>{opp.life}</strong>
+                      {oppLifeDelta !== undefined && oppLifeDelta !== 0 && (
+                        <span
+                          className={`life-delta-pop ${
+                            oppLifeDelta > 0 ? 'positive' : 'negative'
+                          }`}
+                        >
+                          {oppLifeDelta > 0 ? `+${oppLifeDelta}` : oppLifeDelta}
+                        </span>
+                      )}
                     </div>
+                    {isTargetedByStack && (
+                      <span className="stack-target-player-pill">
+                        <Crosshair size={11} /> BERSAGLIO
+                      </span>
+                    )}
                     {opp.poisonCounters > 0 && (
                       <span className="counter-badge poison" title="Segnalini Veleno">
                         ☠ {opp.poisonCounters}
@@ -481,11 +823,12 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
                   </div>
                 </div>
 
-                {/* Opponent Battlefield Rows */}
+                {/* Opponent 3-Zone Tactical Battlefield */}
                 <div className="opponent-battlefield-area">
-                  {/* Opponent Command Zone Banner if Commander is in Command Zone */}
+                  {/* Opponent Command Zone Float */}
                   {opp.zones.command && opp.zones.command.length > 0 && (
                     <div className="opp-command-float">
+                      <span className="lane-micro-tag gold">CMD</span>
                       {opp.zones.command.map((cmdCard) => (
                         <CardVisual
                           key={cmdCard.id}
@@ -494,43 +837,84 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
                           onClick={handleCardClick}
                           onInspect={handleInspectCard}
                           badgeText="ZONA CMD"
+                          isStackSource={stackSourceCardId === cmdCard.id}
+                          isStackTarget={stackTargetCardIds.has(cmdCard.id)}
                         />
                       ))}
                     </div>
                   )}
 
-                  <div className="bf-lanes">
-                    <div className="bf-lane">
-                      {oppBf.creatures.map((c) => (
-                        <CardVisual
-                          key={c.id}
-                          card={c}
-                          size="sm"
-                          onClick={handleCardClick}
-                          onInspect={handleInspectCard}
-                        />
-                      ))}
-                      {oppBf.others.map((c) => (
-                        <CardVisual
-                          key={c.id}
-                          card={c}
-                          size="sm"
-                          onClick={handleCardClick}
-                          onInspect={handleInspectCard}
-                        />
-                      ))}
+                  <div className="bf-tactical-grid">
+                    {/* Front Row: Creatures (Left) + Support Artifacts/Enchantments/PW (Right) */}
+                    <div className="bf-front-split">
+                      <div className="bf-zone-cluster creatures-cluster">
+                        {oppBf.creatures.length > 0 && (
+                          <span className="lane-micro-tag">⚔️ Creature</span>
+                        )}
+                        <div className="bf-cards-flow">
+                          {oppBf.creatures.map((c) => (
+                            <CardVisual
+                              key={c.id}
+                              card={c}
+                              size="sm"
+                              onClick={handleCardClick}
+                              onInspect={handleInspectCard}
+                              attachedCards={oppBf.attachmentsByHostId[c.id] || []}
+                              isStackSource={stackSourceCardId === c.id}
+                              isStackTarget={stackTargetCardIds.has(c.id)}
+                            />
+                          ))}
+                        </div>
+                      </div>
+
+                      {oppBf.support.length > 0 && (
+                        <div className="bf-zone-cluster support-cluster">
+                          <span className="lane-micro-tag">🔮 Supporto</span>
+                          <div className="bf-cards-flow">
+                            {oppBf.support.map((c) => (
+                              <CardVisual
+                                key={c.id}
+                                card={c}
+                                size="sm"
+                                onClick={handleCardClick}
+                                onInspect={handleInspectCard}
+                                attachedCards={oppBf.attachmentsByHostId[c.id] || []}
+                                isStackSource={stackSourceCardId === c.id}
+                                isStackTarget={stackTargetCardIds.has(c.id)}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <div className="bf-lane lands-lane">
-                      {oppBf.lands.map((c) => (
-                        <CardVisual
-                          key={c.id}
-                          card={c}
-                          size="xs"
-                          onClick={handleCardClick}
-                          onInspect={handleInspectCard}
-                        />
-                      ))}
-                    </div>
+
+                    {/* Back Row: Grouped Lands */}
+                    {oppBf.landGroups.length > 0 && (
+                      <div className="bf-zone-cluster lands-cluster">
+                        <span className="lane-micro-tag">⛰️ Terre</span>
+                        <div className="bf-cards-flow">
+                          {oppBf.landGroups.map((grp) => (
+                            <CardVisual
+                              key={grp.key}
+                              card={grp.representative}
+                              size="xs"
+                              stackCount={grp.count}
+                              onClick={handleCardClick}
+                              onInspect={handleInspectCard}
+                              attachedCards={
+                                oppBf.attachmentsByHostId[grp.representative.id] || []
+                              }
+                              isStackSource={grp.cards.some(
+                                (c) => c.id === stackSourceCardId
+                              )}
+                              isStackTarget={grp.cards.some((c) =>
+                                stackTargetCardIds.has(c.id)
+                              )}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -552,6 +936,11 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
                 }`}
               >
                 {gameState.hasPriority ? '⚡ TUA PRIORITÀ' : '⏳ IN ATTESA'}
+              </span>
+              <span className="prompt-phase-tag">
+                {PHASES.find((p) => p.code === gameState.phase)?.icon}{' '}
+                {PHASES.find((p) => p.code === gameState.phase)?.full ||
+                  gameState.phaseLabel}
               </span>
               <span className="prompt-message">
                 {gameState.prompt?.message || 'In attesa della prossima azione...'}
@@ -627,12 +1016,18 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
               <div className="combat-bands-inline">
                 {gameState.combat.bands.map((b, idx) => (
                   <span key={idx} className="combat-band-pill">
-                    {b.attackers.map((a) => `${a.name} (${a.power}/${a.toughness})`).join(', ')}{' '}
+                    ⚔️{' '}
+                    {b.attackers
+                      .map((a) => `${a.name} (${a.power}/${a.toughness})`)
+                      .join(', ')}{' '}
                     ➔ <strong>{b.defenderName}</strong>
                     {b.blocked && b.blockers.length > 0 && (
                       <span className="blocker-sub">
                         {' '}
-                        [Bloccato da: {b.blockers.map((blk) => blk.name).join(', ')}]
+                        • 🛡️ Bloccato da:{' '}
+                        {b.blockers
+                          .map((blk) => `${blk.name} (${blk.power}/${blk.toughness})`)
+                          .join(', ')}
                       </span>
                     )}
                   </span>
@@ -641,41 +1036,82 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
             </div>
           )}
 
-          {/* Live Magic Stack Overlay Strip */}
+          {/* Live Magic Stack Overlay Strip (Shows Triggers, Activated Abilities & Spells in resolution order) */}
           {gameState.stack.length > 0 && (
             <div className="stack-strip">
               <div className="stack-strip-title">
-                <Layers size={15} className="gold-icon" /> PILA (STACK) ({gameState.stack.length})
+                <Layers size={15} className="gold-icon" /> PILA ({gameState.stack.length})
+                <span className="stack-order-hint">Da sinistra: risolve per prima</span>
               </div>
               <div className="stack-items-row">
-                {gameState.stack.map((item, idx) => (
-                  <div
-                    key={item.key || idx}
-                    className="stack-item-card"
-                    onClick={() => {
-                      if (item.sourceCard) handleInspectCard(item.sourceCard);
-                      onSendWs({
-                        type: 'SELECT_STACK_ITEM',
-                        sourceCardId: item.sourceCard?.id ?? -1,
-                      });
-                    }}
-                  >
-                    {item.sourceCard?.imageUrl && (
-                      <img
-                        src={item.sourceCard.imageUrl}
-                        alt={item.sourceCard.name}
-                        className="stack-mini-art"
-                      />
-                    )}
-                    <div className="stack-item-info">
-                      <div className="stack-item-header">
-                        <strong>{item.sourceCard?.name || 'Abilità'}</strong>
-                        <span className="stack-owner">{item.activatingPlayerName}</span>
+                {gameState.stack.map((item, idx) => {
+                  const isTop = idx === 0;
+                  const kindLabel = item.isTrigger
+                    ? '⚡ TRIGGER'
+                    : item.ability
+                    ? '⚙️ ABILITÀ'
+                    : '✨ MAGIA';
+                  const kindClass = item.isTrigger
+                    ? 'stack-kind-trigger'
+                    : item.ability
+                    ? 'stack-kind-ability'
+                    : 'stack-kind-spell';
+                  const allTargets = [
+                    ...item.targetPlayers.map((tp) => tp.name),
+                    ...item.targetCards.map((tc) => tc.name),
+                  ];
+
+                  return (
+                    <div
+                      key={item.key || idx}
+                      className={`stack-item-card ${kindClass} ${
+                        isTop ? 'stack-top-resolving' : ''
+                      }`}
+                      onMouseEnter={() => setHoveredStackKey(item.key)}
+                      onMouseLeave={() => setHoveredStackKey(null)}
+                      onClick={() => {
+                        if (item.sourceCard) handleInspectCard(item.sourceCard);
+                        onSendWs({
+                          type: 'SELECT_STACK_ITEM',
+                          sourceCardId: item.sourceCard?.id ?? -1,
+                        });
+                      }}
+                    >
+                      {item.sourceCard?.imageUrl && (
+                        <img
+                          src={item.sourceCard.imageUrl}
+                          alt={item.sourceCard.name}
+                          className="stack-mini-art"
+                        />
+                      )}
+                      <div className="stack-item-info">
+                        <div className="stack-item-badges-row">
+                          {isTop && (
+                            <span className="stack-resolving-next">▶ RISOLVE ORA</span>
+                          )}
+                          <span className={`stack-type-pill ${kindClass}`}>
+                            {kindLabel}
+                          </span>
+                          <span className="stack-owner">
+                            {item.activatingPlayerName}
+                          </span>
+                        </div>
+                        <div className="stack-item-header">
+                          <strong>{item.sourceCard?.name || 'Abilità'}</strong>
+                        </div>
+                        <p className="stack-item-text" title={item.text}>
+                          {item.text}
+                        </p>
+                        {allTargets.length > 0 && (
+                          <div className="stack-item-targets">
+                            <Crosshair size={10} /> Bersaglio:{' '}
+                            <strong>{allTargets.join(', ')}</strong>
+                          </div>
+                        )}
                       </div>
-                      <p className="stack-item-text">{item.text}</p>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -684,55 +1120,105 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
         {/* LOCAL PLAYER BATTLEFIELD & ZONES */}
         {localPlayer && (
           <section className="local-player-board">
-            {/* Local Battlefield */}
+            {/* Local 3-Zone Tactical Battlefield */}
             <div className="local-battlefield-area">
-              <div className="bf-lane creatures-lane">
-                {localBf.creatures.length === 0 &&
-                  localBf.others.length === 0 &&
-                  localBf.lands.length === 0 && (
-                    <div className="bf-empty-hint">
-                      Il tuo Campo di Battaglia è vuoto. Clicca una terra o magia evidenziata in
-                      verde nella tua mano per giocarla!
+              {localBf.creatures.length === 0 &&
+                localBf.support.length === 0 &&
+                localBf.landGroups.length === 0 && (
+                  <div className="bf-empty-hint">
+                    Il tuo Campo di Battaglia è vuoto. Clicca una terra o magia
+                    evidenziata in verde nella tua mano per giocarla!
+                  </div>
+                )}
+
+              {/* Front Row: Creatures (Main Front) + Support Permanents (Right Flank) */}
+              {(localBf.creatures.length > 0 || localBf.support.length > 0) && (
+                <div className="bf-front-split local-front">
+                  <div className="bf-zone-cluster creatures-cluster">
+                    <span className="lane-micro-tag">
+                      ⚔️ Creature ({localBf.creatures.length})
+                    </span>
+                    <div className="bf-cards-flow">
+                      {localBf.creatures.map((c) => (
+                        <CardVisual
+                          key={c.id}
+                          card={c}
+                          size="md"
+                          onClick={handleCardClick}
+                          onInspect={handleInspectCard}
+                          attachedCards={localBf.attachmentsByHostId[c.id] || []}
+                          isStackSource={stackSourceCardId === c.id}
+                          isStackTarget={stackTargetCardIds.has(c.id)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  {localBf.support.length > 0 && (
+                    <div className="bf-zone-cluster support-cluster">
+                      <span className="lane-micro-tag">
+                        🔮 Artefatti / Incantesimi / PW ({localBf.support.length})
+                      </span>
+                      <div className="bf-cards-flow">
+                        {localBf.support.map((c) => (
+                          <CardVisual
+                            key={c.id}
+                            card={c}
+                            size="md"
+                            onClick={handleCardClick}
+                            onInspect={handleInspectCard}
+                            attachedCards={localBf.attachmentsByHostId[c.id] || []}
+                            isStackSource={stackSourceCardId === c.id}
+                            isStackTarget={stackTargetCardIds.has(c.id)}
+                          />
+                        ))}
+                      </div>
                     </div>
                   )}
-                {localBf.creatures.map((c) => (
-                  <CardVisual
-                    key={c.id}
-                    card={c}
-                    size="md"
-                    onClick={handleCardClick}
-                    onInspect={handleInspectCard}
-                  />
-                ))}
-                {localBf.others.map((c) => (
-                  <CardVisual
-                    key={c.id}
-                    card={c}
-                    size="md"
-                    onClick={handleCardClick}
-                    onInspect={handleInspectCard}
-                  />
-                ))}
-              </div>
+                </div>
+              )}
 
-              <div className="bf-lane lands-lane">
-                {localBf.lands.map((c) => (
-                  <CardVisual
-                    key={c.id}
-                    card={c}
-                    size="sm"
-                    onClick={handleCardClick}
-                    onInspect={handleInspectCard}
-                  />
-                ))}
-              </div>
+              {/* Back Row: Smart Stacked Lands */}
+              {localBf.landGroups.length > 0 && (
+                <div className="bf-zone-cluster lands-cluster local-lands">
+                  <span className="lane-micro-tag">
+                    ⛰️ Terre (
+                    {localBf.landGroups.reduce((acc, g) => acc + g.count, 0)})
+                  </span>
+                  <div className="bf-cards-flow">
+                    {localBf.landGroups.map((grp) => (
+                      <CardVisual
+                        key={grp.key}
+                        card={grp.representative}
+                        size="sm"
+                        stackCount={grp.count}
+                        onClick={handleCardClick}
+                        onInspect={handleInspectCard}
+                        attachedCards={
+                          localBf.attachmentsByHostId[grp.representative.id] || []
+                        }
+                        isStackSource={grp.cards.some(
+                          (c) => c.id === stackSourceCardId
+                        )}
+                        isStackTarget={grp.cards.some((c) =>
+                          stackTargetCardIds.has(c.id)
+                        )}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Local Player Status, Mana Pool & Zone Triggers Bar */}
-            <div className="player-status-bar local-bar">
+            <div
+              className={`player-status-bar local-bar ${
+                stackTargetPlayerIds.has(localPlayer.id) ? 'player-stack-target' : ''
+              }`}
+            >
               <div
                 className={`player-id-group ${
-                  gameState.canSelectPlayers ? 'selectable-player' : ''
+                  localPlayer.isSelectable ? 'selectable-player-highlight' : ''
                 }`}
                 onClick={() => handlePlayerClick(localPlayer)}
                 title="Clicca il tuo avatar per bersagliarti quando richiesto"
@@ -744,8 +1230,28 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
                   }`}
                 >
                   <Heart size={15} /> <strong>{localPlayer.life}</strong>
+                  {lifeDeltas[localPlayer.id] !== undefined &&
+                    lifeDeltas[localPlayer.id] !== 0 && (
+                      <span
+                        className={`life-delta-pop ${
+                          lifeDeltas[localPlayer.id] > 0 ? 'positive' : 'negative'
+                        }`}
+                      >
+                        {lifeDeltas[localPlayer.id] > 0
+                          ? `+${lifeDeltas[localPlayer.id]}`
+                          : lifeDeltas[localPlayer.id]}
+                      </span>
+                    )}
                 </div>
-                <span className="land-drop-pill" title="Terre giocate in questo turno">
+                {stackTargetPlayerIds.has(localPlayer.id) && (
+                  <span className="stack-target-player-pill">
+                    <Crosshair size={11} /> BERSAGLIO DELLA PILA
+                  </span>
+                )}
+                <span
+                  className="land-drop-pill"
+                  title="Terre giocate in questo turno"
+                >
                   ⛰ Terre: {localPlayer.numLandsPlayed}/{localPlayer.maxLandsToPlay}
                 </span>
                 {localPlayer.poisonCounters > 0 && (
@@ -761,7 +1267,10 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
               </div>
 
               {/* Interactive Mana Pool Orbs */}
-              <div className="mana-pool-bar" title="Riserva di Mana — Clicca per spendere mana">
+              <div
+                className="mana-pool-bar"
+                title="Riserva di Mana — Clicca per spendere mana"
+              >
                 <span className="mana-pool-label">Mana:</span>
                 {(['W', 'U', 'B', 'R', 'G', 'C'] as const).map((col) => {
                   const val = localPlayer.manaPool[col] || 0;
@@ -821,7 +1330,7 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
 
             {/* Bottom Tray: Hand + Command Zone Dock */}
             <div className="hand-and-command-tray">
-              {/* Command Zone & Flashback Quick Dock (for casting Commander or Flashback cards!) */}
+              {/* Command Zone & Flashback Quick Dock */}
               {(localPlayer.zones.command.length > 0 ||
                 localPlayer.zones.flashback.length > 0) && (
                 <div className="command-dock">
@@ -878,6 +1387,7 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
                       key={c.id}
                       card={c}
                       size="md"
+                      inHand={true}
                       onClick={handleCardClick}
                       onInspect={handleInspectCard}
                     />
@@ -928,7 +1438,7 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
           </button>
         </div>
 
-        {/* TAB 1: DETAILED CARD INSPECTOR */}
+        {/* TAB 1: DETAILED CARD INSPECTOR (With DFC Flip Support!) */}
         {sidebarTab === 'INSPECTOR' && (
           <div className="sidebar-body inspector-pane">
             {inspectedCard && !inspectedCard.hidden ? (
@@ -936,11 +1446,17 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
                 <div className="inspector-art-frame">
                   <img
                     src={
-                      inspectedCard.imageUrl ||
-                      inspectedCard.scryfallFallbackUrl ||
-                      ''
+                      showAlternateFace && inspectedCard.alternateImageUrl
+                        ? inspectedCard.alternateImageUrl
+                        : inspectedCard.imageUrl ||
+                          inspectedCard.scryfallFallbackUrl ||
+                          ''
                     }
-                    alt={inspectedCard.name}
+                    alt={
+                      showAlternateFace && inspectedCard.alternateName
+                        ? inspectedCard.alternateName
+                        : inspectedCard.name
+                    }
                     className="inspector-large-img"
                     onError={(e) => {
                       if (
@@ -951,14 +1467,42 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
                       }
                     }}
                   />
+                  {inspectedCard.hasAlternateState && (
+                    <button
+                      type="button"
+                      className="btn-flip-dfc"
+                      onClick={() => setShowAlternateFace((prev) => !prev)}
+                      title="Gira la carta per vedere l'altra faccia (DFC / Transform / Modal)"
+                    >
+                      <RefreshCw size={13} />{' '}
+                      {showAlternateFace
+                        ? `Mostra Fronte (${inspectedCard.name})`
+                        : `Gira Faccia (${inspectedCard.alternateName || 'Retro'})`}
+                    </button>
+                  )}
                 </div>
                 <div className="inspector-meta-box">
                   <div className="inspector-title-line">
-                    <h3>{inspectedCard.name}</h3>
-                    <ManaCostDisplay text={inspectedCard.manaCost} size="md" />
+                    <h3>
+                      {showAlternateFace && inspectedCard.alternateName
+                        ? inspectedCard.alternateName
+                        : inspectedCard.name}
+                    </h3>
+                    <ManaCostDisplay
+                      text={
+                        showAlternateFace && inspectedCard.alternateManaCost
+                          ? inspectedCard.alternateManaCost
+                          : inspectedCard.manaCost
+                      }
+                      size="md"
+                    />
                   </div>
                   <div className="inspector-type-line">
-                    <span>{inspectedCard.type}</span>
+                    <span>
+                      {showAlternateFace && inspectedCard.alternateType
+                        ? inspectedCard.alternateType
+                        : inspectedCard.type}
+                    </span>
                     {inspectedCard.setCode && (
                       <span className="set-tag">{inspectedCard.setCode}</span>
                     )}
@@ -968,7 +1512,10 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
                     <div className="inspector-pt-bar">
                       Forza / Costituzione:{' '}
                       <strong>
-                        {inspectedCard.power}/{inspectedCard.toughness}
+                        {showAlternateFace &&
+                        inspectedCard.alternatePower !== undefined
+                          ? `${inspectedCard.alternatePower}/${inspectedCard.alternateToughness}`
+                          : `${inspectedCard.power}/${inspectedCard.toughness}`}
                       </strong>
                       {(inspectedCard.damage || 0) > 0 && (
                         <span className="dmg-warn">
@@ -981,9 +1528,11 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
 
                   <OracleTextDisplay
                     text={
-                      inspectedCard.oracleText ||
-                      inspectedCard.abilityText ||
-                      inspectedCard.fullText
+                      showAlternateFace && inspectedCard.alternateOracleText
+                        ? inspectedCard.alternateOracleText
+                        : inspectedCard.oracleText ||
+                          inspectedCard.abilityText ||
+                          inspectedCard.fullText
                     }
                   />
 

@@ -2105,38 +2105,137 @@ textarea:focus {
   overflow-x: auto;
 }
 
-/* MTG CARD VISUAL COMPONENT */
+/* MTG CARD VISUAL COMPONENT & UNIT WRAPPER */
+.mtg-card-unit {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: margin 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.mtg-card-unit.has-attachments {
+  margin-top: 18px;
+}
+
+.mtg-card-unit.has-stack-count {
+  margin-right: 10px;
+  margin-bottom: 4px;
+}
+
+.mtg-card-unit.in-hand-unit {
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.mtg-card-unit.in-hand-unit:hover {
+  transform: translateY(-14px) scale(1.08);
+  z-index: 35;
+}
+
+/* Visual stacked shadow cards for grouped identical Lands */
+.card-stack-shadow-1,
+.card-stack-shadow-2 {
+  position: absolute;
+  inset: 0;
+  border-radius: 7px;
+  background: #141923;
+  border: 1px solid rgba(212, 169, 89, 0.38);
+  pointer-events: none;
+}
+
+.card-stack-shadow-1 {
+  transform: translate(5px, 4px);
+  z-index: 0;
+}
+
+.card-stack-shadow-2 {
+  transform: translate(9px, 8px);
+  z-index: -1;
+  opacity: 0.7;
+}
+
+/* Tucked Auras & Equipment behind host permanent */
+.attached-cards-tuck {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 0;
+  z-index: 1;
+}
+
+.attached-mini-peek {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 18px;
+  background: linear-gradient(90deg, #271f3b 0%, #1a2436 100%);
+  border: 1px solid var(--gold-main);
+  border-radius: 5px 5px 0 0;
+  padding: 1px 5px;
+  font-size: 8.5px;
+  font-weight: 700;
+  color: var(--gold-bright);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.5);
+}
+
+.attached-mini-peek:hover {
+  background: var(--gold-main);
+  color: #111;
+  z-index: 30;
+}
+
 .mtg-card {
   position: relative;
+  z-index: 2;
   border-radius: 7px;
   background: #171b24;
-  border: 1.5px solid rgba(255, 255, 255, 0.18);
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.58);
   cursor: pointer;
   user-select: none;
-  transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.2s ease,
+    border-color 0.2s ease,
+    filter 0.2s ease;
   flex-shrink: 0;
   overflow: hidden;
+  animation: cardEnterBoard 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes cardEnterBoard {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .mtg-card:hover {
-  transform: translateY(-5px) scale(1.04);
-  z-index: 20;
+  transform: translateY(-6px) scale(1.06);
+  z-index: 28;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.75);
 }
 
 .mtg-card-xs {
-  width: 66px;
-  height: 92px;
+  width: 68px;
+  height: 95px;
 }
 
 .mtg-card-sm {
-  width: 82px;
-  height: 114px;
+  width: 84px;
+  height: 117px;
 }
 
 .mtg-card-md {
-  width: 98px;
-  height: 136px;
+  width: 100px;
+  height: 139px;
 }
 
 .mtg-card-lg {
@@ -2144,29 +2243,132 @@ textarea:focus {
   height: 196px;
 }
 
+/* Realistic MTG Tap & Untap states and animations */
 .mtg-card.card-tapped {
-  transform: rotate(14deg);
-  margin: 0 8px;
+  transform: rotate(78deg);
+  margin: 4px 18px;
+  filter: brightness(0.84) saturate(0.88);
+  border-color: rgba(255, 255, 255, 0.32);
+}
+
+.mtg-card.card-tapped:hover {
+  transform: rotate(78deg) scale(1.06);
+  filter: brightness(1);
+}
+
+.mtg-card.card-tapping {
+  animation: tapPulse 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes tapPulse {
+  0% {
+    transform: rotate(0deg) scale(1.06);
+  }
+  100% {
+    transform: rotate(78deg) scale(1);
+  }
+}
+
+.mtg-card.card-untapping {
+  animation: untapGlow 0.95s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes untapGlow {
+  0% {
+    transform: rotate(78deg) scale(0.96);
+    box-shadow: 0 0 0 rgba(56, 189, 248, 0);
+  }
+  40% {
+    transform: rotate(-4deg) scale(1.07);
+    box-shadow: 0 0 22px rgba(56, 189, 248, 0.9), 0 0 10px rgba(242, 200, 107, 0.8);
+    border-color: #38bdf8;
+  }
+  100% {
+    transform: rotate(0deg) scale(1);
+  }
+}
+
+.untap-flash-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.38), rgba(212, 169, 89, 0.25));
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+  animation: fadeOutQuick 0.95s ease forwards;
+}
+
+@keyframes fadeOutQuick {
+  0%, 55% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.mtg-card.card-damaged-flash {
+  animation: damageShake 0.65s ease;
+}
+
+@keyframes damageShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px) rotate(-3deg); box-shadow: 0 0 20px rgba(239, 68, 68, 0.95); }
+  45% { transform: translateX(5px) rotate(3deg); }
+  70% { transform: translateX(-3px); }
 }
 
 .mtg-card.card-actionable {
   border-color: var(--emerald-bright);
-  box-shadow: 0 0 12px rgba(66, 227, 150, 0.55);
+  box-shadow: 0 0 14px rgba(66, 227, 150, 0.62);
 }
 
 .mtg-card.card-autotap {
   border-color: var(--gold-bright);
-  box-shadow: 0 0 12px rgba(242, 200, 107, 0.6);
+  box-shadow: 0 0 14px rgba(242, 200, 107, 0.65);
 }
 
 .mtg-card.card-selected {
   border-color: #38bdf8;
-  box-shadow: 0 0 14px rgba(56, 189, 248, 0.8);
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.85);
 }
 
 .mtg-card.card-attacking {
   border-color: var(--crimson-main);
-  box-shadow: 0 0 12px rgba(217, 70, 70, 0.7);
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.8);
+}
+
+.mtg-card.card-blocking {
+  border-color: #3b82f6;
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.8);
+}
+
+/* Stack Source & Target Highlight on the Board */
+.mtg-card.card-stack-source {
+  border-color: #c084fc;
+  box-shadow: 0 0 18px rgba(192, 132, 252, 0.9), inset 0 0 8px rgba(192, 132, 252, 0.45);
+}
+
+.mtg-card.card-stack-target {
+  border-color: #f43f5e;
+  box-shadow: 0 0 20px rgba(244, 63, 94, 0.95);
+  animation: targetPulse 1.1s infinite alternate;
+}
+
+@keyframes targetPulse {
+  from {
+    box-shadow: 0 0 10px rgba(244, 63, 94, 0.65);
+  }
+  to {
+    box-shadow: 0 0 22px rgba(244, 63, 94, 1);
+  }
 }
 
 .mtg-card-art-wrapper {
@@ -2182,13 +2384,24 @@ textarea:focus {
   display: block;
 }
 
+.mtg-card-hand-mana {
+  position: absolute;
+  top: 3px;
+  right: 24px;
+  background: rgba(9, 12, 18, 0.84);
+  padding: 1px 4px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  pointer-events: none;
+}
+
 .mtg-card-overlay-header {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.88));
-  padding: 12px 4px 3px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.92));
+  padding: 14px 5px 3px;
 }
 
 .mtg-card-overlay-name {
@@ -2260,6 +2473,7 @@ textarea:focus {
   flex-direction: column;
   gap: 2px;
   pointer-events: none;
+  z-index: 4;
 }
 
 .card-chip {
@@ -2270,13 +2484,27 @@ textarea:focus {
   font-weight: 800;
   padding: 1px 4px;
   border-radius: 3px;
-  background: rgba(11, 14, 19, 0.88);
+  background: rgba(11, 14, 19, 0.9);
   color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.chip-stack-qty {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #0b0e13;
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border: 1px solid #fef3c7;
 }
 
 .chip-commander {
   background: var(--gold-main);
   color: #111;
+}
+
+.chip-tapped {
+  background: rgba(56, 189, 248, 0.88);
+  color: #061523;
 }
 
 .chip-attack {
@@ -2285,6 +2513,66 @@ textarea:focus {
 
 .chip-block {
   background: #2563eb;
+}
+
+.chip-stack-source {
+  background: #9333ea;
+  color: #fff;
+}
+
+.chip-stack-target {
+  background: #e11d48;
+  color: #fff;
+}
+
+.mtg-card-keywords-strip {
+  position: absolute;
+  bottom: 22px;
+  left: 3px;
+  display: flex;
+  gap: 2px;
+  pointer-events: auto;
+  z-index: 4;
+}
+
+.kw-micro-badge {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(10, 14, 21, 0.88);
+  border: 1px solid rgba(212, 169, 89, 0.45);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+}
+
+.combat-assignment-ribbon {
+  position: absolute;
+  bottom: 20px;
+  left: 2px;
+  right: 2px;
+  font-size: 8.5px;
+  font-weight: 800;
+  padding: 1px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.combat-assignment-ribbon.attack-ribbon {
+  background: rgba(220, 38, 38, 0.92);
+  color: #fff;
+  border: 1px solid #fca5a5;
+}
+
+.combat-assignment-ribbon.block-ribbon {
+  background: rgba(37, 99, 235, 0.92);
+  color: #fff;
+  border: 1px solid #93c5fd;
 }
 
 .card-info-btn {
@@ -2301,7 +2589,8 @@ textarea:focus {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  opacity: 0.75;
+  opacity: 0.78;
+  z-index: 5;
 }
 
 .card-info-btn:hover {
@@ -2310,12 +2599,33 @@ textarea:focus {
   color: #111;
 }
 
+.mtg-card-counters {
+  position: absolute;
+  top: 26px;
+  right: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.mtg-card-counters .counter-pill {
+  font-size: 8.5px;
+  font-weight: 800;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.92);
+  color: #052e16;
+  border: 1px solid #a7f3d0;
+}
+
 .mtg-card-pt,
 .mtg-card-loyalty {
   position: absolute;
   bottom: 3px;
   right: 3px;
-  background: rgba(12, 15, 22, 0.92);
+  background: rgba(12, 15, 22, 0.94);
   border: 1px solid var(--gold-border);
   border-radius: 4px;
   padding: 1px 5px;
@@ -2323,6 +2633,7 @@ textarea:focus {
   font-size: 10px;
   font-weight: 800;
   color: #fff;
+  z-index: 5;
 }
 
 .mtg-card-pt.pt-damaged {
@@ -2330,7 +2641,414 @@ textarea:focus {
   color: #ff9c9c;
 }
 
-/* RIGHT INFO SIDEBAR */
+/* 3-ZONE TACTICAL BATTLEFIELD LAYOUT */
+.bf-tactical-grid {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: space-between;
+}
+
+.bf-front-split {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.bf-zone-cluster {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.015);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.creatures-cluster {
+  flex: 2;
+  min-width: 200px;
+}
+
+.support-cluster {
+  flex: 1;
+  min-width: 150px;
+  border-left: 2px dashed rgba(212, 169, 89, 0.25);
+}
+
+.lands-cluster {
+  background: rgba(10, 14, 20, 0.38);
+  border-color: rgba(212, 169, 89, 0.14);
+}
+
+.lane-micro-tag {
+  font-size: 9.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.lane-micro-tag.gold {
+  color: var(--gold-bright);
+}
+
+.bf-cards-flow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-height: 62px;
+}
+
+/* PHASE GROUP DIVIDERS & TRANSITION BANNER */
+.phase-group-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border-strong);
+  margin: 0 2px;
+}
+
+.phase-icon-mini {
+  font-size: 10px;
+}
+
+.prompt-phase-tag {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--gold-bright);
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(212, 169, 89, 0.12);
+  border: 1px solid var(--gold-border);
+}
+
+.phase-transition-banner {
+  position: fixed;
+  top: 56px;
+  left: calc(50% - 165px);
+  transform: translateX(-50%);
+  z-index: 90;
+  padding: 10px 28px;
+  border-radius: 10px;
+  background: rgba(11, 15, 23, 0.92);
+  border: 1.5px solid var(--gold-bright);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.75), 0 0 24px rgba(212, 169, 89, 0.35);
+  text-align: center;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+  animation: bannerPopFade 1.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.phase-transition-banner.accent-turn-my {
+  border-color: var(--emerald-bright);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.8), 0 0 28px rgba(52, 211, 153, 0.45);
+}
+
+.phase-transition-banner.accent-combat {
+  border-color: var(--crimson-main);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.8), 0 0 28px rgba(239, 68, 68, 0.5);
+}
+
+.phase-transition-banner.accent-untap {
+  border-color: #38bdf8;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.8), 0 0 28px rgba(56, 189, 248, 0.5);
+}
+
+.phase-banner-title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--gold-bright);
+  letter-spacing: 0.06em;
+}
+
+.phase-transition-banner.accent-turn-my .phase-banner-title {
+  color: var(--emerald-bright);
+}
+
+.phase-transition-banner.accent-combat .phase-banner-title {
+  color: #fca5a5;
+}
+
+.phase-banner-sub {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+@keyframes bannerPopFade {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -14px) scale(0.94);
+  }
+  18%, 74% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -8px) scale(0.97);
+  }
+}
+
+/* LIVE TRIGGER & STACK TOAST OVERLAY */
+.trigger-toast-container {
+  position: fixed;
+  top: 58px;
+  right: 344px;
+  z-index: 85;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 320px;
+  pointer-events: none;
+}
+
+.trigger-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(14, 18, 27, 0.94);
+  border: 1.5px solid var(--gold-main);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(6px);
+  animation: slideInRightToast 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.trigger-toast.toast-trigger {
+  border-color: #c084fc;
+  box-shadow: 0 8px 24px rgba(168, 85, 247, 0.35);
+}
+
+.trigger-toast.toast-ability {
+  border-color: #38bdf8;
+}
+
+@keyframes slideInRightToast {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.trigger-toast-art {
+  width: 38px;
+  height: 52px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.trigger-toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.trigger-toast-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.trigger-kind-tag {
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.trigger-kind-tag.kind-trigger {
+  background: rgba(192, 132, 252, 0.22);
+  color: #e9d5ff;
+}
+
+.trigger-kind-tag.kind-ability {
+  background: rgba(56, 189, 248, 0.22);
+  color: #bae6fd;
+}
+
+.trigger-kind-tag.kind-spell {
+  background: var(--gold-dim);
+  color: var(--gold-bright);
+}
+
+.trigger-toast-player {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.trigger-toast-title {
+  font-size: 12px;
+  color: #fff;
+}
+
+.trigger-toast-text {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.trigger-toast-targets {
+  font-size: 10px;
+  color: #fda4af;
+  font-weight: 700;
+}
+
+/* ENHANCED STACK ITEMS & TARGET PILLS */
+.stack-order-hint {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+.stack-item-card.stack-top-resolving {
+  border-width: 1.5px;
+  border-color: var(--emerald-bright);
+  box-shadow: 0 0 14px rgba(52, 211, 153, 0.35);
+}
+
+.stack-item-card.stack-kind-trigger {
+  border-color: #c084fc;
+}
+
+.stack-item-card.stack-kind-ability {
+  border-color: #38bdf8;
+}
+
+.stack-item-badges-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 2px;
+}
+
+.stack-resolving-next {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--emerald-main);
+  color: #052e16;
+}
+
+.stack-type-pill {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-surface-3);
+}
+
+.stack-type-pill.stack-kind-trigger {
+  background: rgba(192, 132, 252, 0.25);
+  color: #e9d5ff;
+}
+
+.stack-type-pill.stack-kind-ability {
+  background: rgba(56, 189, 248, 0.25);
+  color: #bae6fd;
+}
+
+.stack-type-pill.stack-kind-spell {
+  background: var(--gold-dim);
+  color: var(--gold-bright);
+}
+
+.stack-item-targets {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: #fda4af;
+  margin-top: 2px;
+}
+
+/* PLAYER TARGET & LIFE DELTA INDICATORS */
+.player-stack-target {
+  border-color: #f43f5e !important;
+  box-shadow: 0 0 16px rgba(244, 63, 94, 0.55);
+}
+
+.selectable-player-highlight {
+  cursor: pointer;
+  border-color: var(--emerald-bright) !important;
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.45);
+}
+
+.stack-target-player-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e11d48;
+  color: #fff;
+}
+
+.opp-priority-dot {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--gold-bright);
+  background: var(--gold-dim);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--gold-border);
+}
+
+.life-delta-pop {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 900;
+  padding: 1px 5px;
+  border-radius: 6px;
+  margin-left: 3px;
+  animation: deltaFloat 1.8s ease forwards;
+}
+
+.life-delta-pop.positive {
+  background: rgba(16, 185, 129, 0.25);
+  color: #6ee7b7;
+}
+
+.life-delta-pop.negative {
+  background: rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+}
+
+@keyframes deltaFloat {
+  0% {
+    opacity: 0;
+    transform: translateY(4px) scale(0.85);
+  }
+  20%, 75% {
+    opacity: 1;
+    transform: translateY(0) scale(1.05);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.95);
+  }
+}
+
+/* RIGHT INFO SIDEBAR & DFC FLIP BUTTON */
 .game-info-sidebar {
   background: var(--bg-surface-1);
   border-left: 1px solid var(--border-strong);
@@ -2378,7 +3096,9 @@ textarea:focus {
 .inspector-art-frame {
   width: 100%;
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 10px;
 }
 
@@ -2386,6 +3106,25 @@ textarea:focus {
   width: 220px;
   border-radius: 9px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+.btn-flip-dfc {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  background: var(--gold-dim);
+  border: 1px solid var(--gold-main);
+  color: var(--gold-bright);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-flip-dfc:hover {
+  background: var(--gold-main);
+  color: #111;
 }
 
 .inspector-meta-box {
@@ -2573,3 +3312,4 @@ textarea:focus {
   gap: 10px;
   margin-top: 8px;
 }
+

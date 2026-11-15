@@ -157,6 +157,18 @@ export function normalizeCardView(raw: any): CardViewState {
     attachedToId: raw.attachedToId ?? raw.attachedToCardId ?? -1,
     attachedCardIds: Array.isArray(raw.attachedCardIds) ? raw.attachedCardIds : [],
     enchantingPlayerId: raw.enchantingPlayerId ?? raw.enchantedPlayerId ?? -1,
+    defendingEntityId: raw.defendingEntityId ?? -1,
+    defendingEntityName: raw.defendingEntityName || '',
+    blockedByIds: Array.isArray(raw.blockedByIds) ? raw.blockedByIds : [],
+    blockingAttackerName: raw.blockingAttackerName || '',
+    hasAlternateState: Boolean(raw.hasAlternateState),
+    alternateName: raw.alternateName || '',
+    alternateManaCost: raw.alternateManaCost || '',
+    alternateType: raw.alternateType || '',
+    alternateOracleText: raw.alternateOracleText || '',
+    alternatePower: raw.alternatePower,
+    alternateToughness: raw.alternateToughness,
+    alternateImageUrl: raw.alternateImageUrl || '',
     actionableStrength:
       raw.actionableStrength ?? (raw.isActionable || raw.isSelectable ? 1 : 0),
     selected: Boolean(raw.selected ?? raw.isSelected),
@@ -227,6 +239,8 @@ export function normalizeGameState(raw: any): GameStatePayload | null {
       isAI: Boolean(p.isAI),
       isLocalViewer: Boolean(p.isLocalViewer ?? p.isViewer),
       isSelectable: Boolean(p.isSelectable),
+      isSelected: Boolean(p.isSelected),
+      isTurn: Boolean(p.isTurn),
       life: p.life ?? 20,
       hasLost: Boolean(p.hasLost),
       hasPriority: Boolean(p.hasPriority),
@@ -278,12 +292,21 @@ export function normalizeGameState(raw: any): GameStatePayload | null {
     key: String(s.key ?? s.id ?? Math.random()),
     text: s.text || '',
     optionalTrigger: Boolean(s.optionalTrigger ?? s.isTrigger),
+    isTrigger: Boolean(s.isTrigger ?? s.optionalTrigger),
     ability: Boolean(s.ability ?? s.isAbility),
     activatingPlayerId: s.activatingPlayerId ?? -1,
     activatingPlayerName: s.activatingPlayerName || '',
     sourceCard: s.sourceCard ? normalizeCardView(s.sourceCard) : undefined,
-    targetCards: Array.isArray(s.targetCards) ? s.targetCards : [],
-    targetPlayers: Array.isArray(s.targetPlayers) ? s.targetPlayers : [],
+    targetCards: Array.isArray(s.targetCards)
+      ? s.targetCards.map((tc: any) =>
+          typeof tc === 'object' ? { id: tc.id ?? -1, name: tc.name || 'Carta' } : { id: Number(tc), name: `#${tc}` }
+        )
+      : [],
+    targetPlayers: Array.isArray(s.targetPlayers)
+      ? s.targetPlayers.map((tp: any) =>
+          typeof tp === 'object' ? { id: tp.id ?? -1, name: tp.name || 'Giocatore' } : { id: Number(tp), name: `#${tp}` }
+        )
+      : [],
   }));
 
   let combat: { numAttackers: number; bands: CombatBandState[] } | null = null;
@@ -297,11 +320,18 @@ export function normalizeGameState(raw: any): GameStatePayload | null {
         {
           id: b.attackerId ?? -1,
           name: b.attackerName || 'Attaccante',
-          power: 0,
-          toughness: 0,
+          power: b.attackerPower ?? 0,
+          toughness: b.attackerToughness ?? 0,
         },
       ],
-      blockers: [],
+      blockers: Array.isArray(b.blockers)
+        ? b.blockers.map((blk: any) => ({
+            id: blk.id ?? -1,
+            name: blk.name || 'Bloccante',
+            power: blk.power ?? 0,
+            toughness: blk.toughness ?? 0,
+          }))
+        : [],
     }));
     combat = { numAttackers: bands.length, bands };
   } else if (raw.combat && Array.isArray(raw.combat.bands)) {

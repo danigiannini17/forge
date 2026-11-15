@@ -152,6 +152,18 @@ export interface CardViewState {
   attachedToId?: number;
   attachedCardIds?: number[];
   enchantingPlayerId?: number;
+  defendingEntityId?: number;
+  defendingEntityName?: string;
+  blockedByIds?: number[];
+  blockingAttackerName?: string;
+  hasAlternateState?: boolean;
+  alternateName?: string;
+  alternateManaCost?: string;
+  alternateType?: string;
+  alternateOracleText?: string;
+  alternatePower?: number;
+  alternateToughness?: number;
+  alternateImageUrl?: string;
   actionableStrength?: number; // 0 = none, 1 = playable, 2 = autotap
   selected?: boolean;
 }
@@ -175,6 +187,8 @@ export interface PlayerViewState {
   isAI: boolean;
   isLocalViewer: boolean;
   isSelectable?: boolean;
+  isSelected?: boolean;
+  isTurn?: boolean;
   life: number;
   hasLost: boolean;
   hasPriority: boolean;
@@ -224,6 +238,7 @@ export interface StackItemState {
   key: string;
   text: string;
   optionalTrigger: boolean;
+  isTrigger: boolean;
   ability: boolean;
   activatingPlayerId: number;
   activatingPlayerName: string;

@@ -105,6 +105,7 @@ public class GameStateSerializer {
         Map<Integer, Integer> attackerToDefenderId = new HashMap<>();
         Map<Integer, String> attackerToDefenderName = new HashMap<>();
         Map<Integer, List<Integer>> attackerToBlockerIds = new HashMap<>();
+        Map<Integer, String> blockerToAttackerName = new HashMap<>();
         JsonArray combatBands = new JsonArray();
 
         if (combat != null) {
@@ -118,25 +119,40 @@ public class GameStateSerializer {
                     attackerToDefenderName.put(attacker.getId(), defName);
 
                     List<Integer> blockerIds = new ArrayList<>();
+                    JsonArray blockerObjs = new JsonArray();
                     FCollectionView<CardView> blockers = combat.getBlockers(attacker);
                     if (blockers == null || blockers.isEmpty()) {
                         blockers = combat.getPlannedBlockers(attacker);
                     }
                     if (blockers != null) {
                         for (CardView b : blockers) {
-                            if (b != null) blockerIds.add(b.getId());
+                            if (b != null) {
+                                blockerIds.add(b.getId());
+                                blockerToAttackerName.put(b.getId(), attacker.getName());
+                                JsonObject bo = new JsonObject();
+                                bo.addProperty("id", b.getId());
+                                bo.addProperty("name", b.getName());
+                                CardStateView bs = b.getCurrentState();
+                                bo.addProperty("power", bs != null ? bs.getPower() : 0);
+                                bo.addProperty("toughness", bs != null ? bs.getToughness() : 0);
+                                blockerObjs.add(bo);
+                            }
                         }
                     }
                     attackerToBlockerIds.put(attacker.getId(), blockerIds);
 
+                    CardStateView as = attacker.getCurrentState();
                     JsonObject bandObj = new JsonObject();
                     bandObj.addProperty("attackerId", attacker.getId());
                     bandObj.addProperty("attackerName", attacker.getName());
+                    bandObj.addProperty("attackerPower", as != null ? as.getPower() : 0);
+                    bandObj.addProperty("attackerToughness", as != null ? as.getToughness() : 0);
                     bandObj.addProperty("defenderId", defId);
                     bandObj.addProperty("defenderName", defName);
                     JsonArray bArr = new JsonArray();
                     for (int bid : blockerIds) bArr.add(bid);
                     bandObj.add("blockerIds", bArr);
+                    bandObj.add("blockers", blockerObjs);
                     combatBands.add(bandObj);
                 }
             } catch (Exception ignored) {
@@ -161,7 +177,8 @@ public class GameStateSerializer {
                         actionableCardStrength,
                         attackerToDefenderId,
                         attackerToDefenderName,
-                        attackerToBlockerIds
+                        attackerToBlockerIds,
+                        blockerToAttackerName
                 ));
             }
         }
@@ -219,7 +236,8 @@ public class GameStateSerializer {
             Map<Integer, Integer> actionableCardStrength,
             Map<Integer, Integer> attackerToDefenderId,
             Map<Integer, String> attackerToDefenderName,
-            Map<Integer, List<Integer>> attackerToBlockerIds
+            Map<Integer, List<Integer>> attackerToBlockerIds,
+            Map<Integer, String> blockerToAttackerName
     ) {
         JsonObject pObj = new JsonObject();
         pObj.addProperty("id", pv.getId());
@@ -290,7 +308,7 @@ public class GameStateSerializer {
                 if (cmdr == null) continue;
                 JsonObject cObj = serializeCard(
                         cmdr, viewer, selectableCardIds, chosenIds, actionableCardStrength,
-                        attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds, true
+                        attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds, blockerToAttackerName, true
                 );
                 int castCount = pv.getCommanderCast(cmdr);
                 cObj.addProperty("commanderCastCount", castCount);
@@ -333,27 +351,27 @@ public class GameStateSerializer {
         // Zones
         pObj.add("hand", serializeZoneCards(
                 pv.getHand(), viewer, selectableCardIds, chosenIds, actionableCardStrength,
-                attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds
+                attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds, blockerToAttackerName
         ));
         pObj.add("battlefield", serializeZoneCards(
                 pv.getBattlefield(), viewer, selectableCardIds, chosenIds, actionableCardStrength,
-                attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds
+                attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds, blockerToAttackerName
         ));
         pObj.add("command", serializeZoneCards(
                 pv.getCommand(), viewer, selectableCardIds, chosenIds, actionableCardStrength,
-                attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds
+                attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds, blockerToAttackerName
         ));
         pObj.add("graveyard", serializeZoneCards(
                 pv.getGraveyard(), viewer, selectableCardIds, chosenIds, actionableCardStrength,
-                attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds
+                attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds, blockerToAttackerName
         ));
         pObj.add("exile", serializeZoneCards(
                 pv.getExile(), viewer, selectableCardIds, chosenIds, actionableCardStrength,
-                attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds
+                attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds, blockerToAttackerName
         ));
         pObj.add("flashback", serializeZoneCards(
                 pv.getFlashback(), viewer, selectableCardIds, chosenIds, actionableCardStrength,
-                attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds
+                attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds, blockerToAttackerName
         ));
 
         return pObj;
@@ -367,7 +385,8 @@ public class GameStateSerializer {
             Map<Integer, Integer> actionableCardStrength,
             Map<Integer, Integer> attackerToDefenderId,
             Map<Integer, String> attackerToDefenderName,
-            Map<Integer, List<Integer>> attackerToBlockerIds
+            Map<Integer, List<Integer>> attackerToBlockerIds,
+            Map<Integer, String> blockerToAttackerName
     ) {
         JsonArray arr = new JsonArray();
         if (cards == null) return arr;
@@ -375,7 +394,7 @@ public class GameStateSerializer {
             if (cv == null) continue;
             arr.add(serializeCard(
                     cv, viewer, selectableCardIds, chosenIds, actionableCardStrength,
-                    attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds, false
+                    attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds, blockerToAttackerName, false
             ));
         }
         return arr;
@@ -390,6 +409,24 @@ public class GameStateSerializer {
             Map<Integer, Integer> attackerToDefenderId,
             Map<Integer, String> attackerToDefenderName,
             Map<Integer, List<Integer>> attackerToBlockerIds,
+            boolean forceVisible
+    ) {
+        return serializeCard(
+                cv, viewer, selectableCardIds, chosenIds, actionableCardStrength,
+                attackerToDefenderId, attackerToDefenderName, attackerToBlockerIds, null, forceVisible
+        );
+    }
+
+    public static JsonObject serializeCard(
+            CardView cv,
+            PlayerView viewer,
+            Set<Integer> selectableCardIds,
+            Set<Integer> chosenIds,
+            Map<Integer, Integer> actionableCardStrength,
+            Map<Integer, Integer> attackerToDefenderId,
+            Map<Integer, String> attackerToDefenderName,
+            Map<Integer, List<Integer>> attackerToBlockerIds,
+            Map<Integer, String> blockerToAttackerName,
             boolean forceVisible
     ) {
         JsonObject cObj = new JsonObject();
@@ -498,6 +535,23 @@ public class GameStateSerializer {
             cObj.addProperty("artCropUrl", DeckCatalogService.buildScryfallNamedUrl(oracleName, true));
         }
 
+        // Alternate face (DFC / Transform / Modal DFC / Adventure)
+        if (cv.hasAlternateState() && cv.getAlternateState() != null) {
+            CardStateView alt = cv.getAlternateState();
+            String altName = alt.getName() != null ? alt.getName() : "";
+            String altOracleName = alt.getOracleName() != null && !alt.getOracleName().isEmpty() ? alt.getOracleName() : altName;
+            cObj.addProperty("hasAlternateState", true);
+            cObj.addProperty("alternateName", altName);
+            cObj.addProperty("alternateManaCost", alt.getManaCost() != null ? alt.getManaCost().toString() : "");
+            cObj.addProperty("alternateType", alt.getType() != null ? alt.getType().toString() : "");
+            cObj.addProperty("alternateOracleText", alt.getOracleText() != null ? alt.getOracleText() : "");
+            cObj.addProperty("alternatePower", alt.getPower());
+            cObj.addProperty("alternateToughness", alt.getToughness());
+            cObj.addProperty("alternateImageUrl", resolveImageUrl(alt.getTrackableImageKey(), altOracleName));
+        } else {
+            cObj.addProperty("hasAlternateState", false);
+        }
+
         cObj.addProperty("damage", cv.getDamage());
         cObj.addProperty("fullText", cv.getText() != null ? cv.getText() : "");
 
@@ -539,6 +593,9 @@ public class GameStateSerializer {
             }
             cObj.add("blockedByIds", bArr);
         }
+        if (blockerToAttackerName != null && blockerToAttackerName.containsKey(cv.getId())) {
+            cObj.addProperty("blockingAttackerName", blockerToAttackerName.get(cv.getId()));
+        }
 
         return cObj;
     }
@@ -558,26 +615,42 @@ public class GameStateSerializer {
 
         CardView source = siv.getSourceCard();
         if (source != null) {
-            sObj.add("sourceCard", serializeCard(source, viewer, null, null, null, null, null, null, true));
+            sObj.add("sourceCard", serializeCard(source, viewer, null, null, null, null, null, null, null, true));
         }
 
         JsonArray targetCardIds = new JsonArray();
+        JsonArray targetCardsArr = new JsonArray();
         FCollectionView<CardView> targetCards = siv.getTargetCards();
         if (targetCards != null) {
             for (CardView tc : targetCards) {
-                if (tc != null) targetCardIds.add(tc.getId());
+                if (tc != null) {
+                    targetCardIds.add(tc.getId());
+                    JsonObject tco = new JsonObject();
+                    tco.addProperty("id", tc.getId());
+                    tco.addProperty("name", tc.getName() != null ? tc.getName() : "Carta");
+                    targetCardsArr.add(tco);
+                }
             }
         }
         sObj.add("targetCardIds", targetCardIds);
+        sObj.add("targetCards", targetCardsArr);
 
         JsonArray targetPlayerIds = new JsonArray();
+        JsonArray targetPlayersArr = new JsonArray();
         FCollectionView<PlayerView> targetPlayers = siv.getTargetPlayers();
         if (targetPlayers != null) {
             for (PlayerView tp : targetPlayers) {
-                if (tp != null) targetPlayerIds.add(tp.getId());
+                if (tp != null) {
+                    targetPlayerIds.add(tp.getId());
+                    JsonObject tpo = new JsonObject();
+                    tpo.addProperty("id", tp.getId());
+                    tpo.addProperty("name", tp.getName() != null ? tp.getName() : "Giocatore");
+                    targetPlayersArr.add(tpo);
+                }
             }
         }
         sObj.add("targetPlayerIds", targetPlayerIds);
+        sObj.add("targetPlayers", targetPlayersArr);
 
         return sObj;
     }
