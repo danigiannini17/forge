@@ -152,7 +152,7 @@ public class ForgeWebServer {
 
             Channel ch = b.bind(port).sync().channel();
             System.out.println("=============================================================");
-            System.out.println("  Forge Multiplayer Web Server listening on port " + port);
+            System.out.println("  Lozzander Online — Web Server listening on port " + port);
             System.out.println("  API: http://localhost:" + port + "/api/status");
             System.out.println("  WS:  ws://localhost:" + port + "/ws");
             System.out.println("=============================================================");

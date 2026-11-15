@@ -1,13 +1,13 @@
-# Card Forge — Guida Completa alla WebApp Multiplayer (`webapp/`)
+# Lozzander Online — Guida Completa alla WebApp Multiplayer (`webapp/`)
 
-Questa guida spiega passo dopo passo **come compilare e avviare** la WebApp Multiplayer di Card Forge sul tuo computer o server e **come utilizzarla** per giocare a *Magic: The Gathering* (incluso **Commander / EDH** fino a 8 giocatori e **Constructed**) insieme ai tuoi amici o contro i bot IA.
+Questa guida spiega passo dopo passo **come compilare e avviare** **Lozzander Online** sul tuo computer o server e **come utilizzarla** per giocare a *Magic: The Gathering* (incluso **Commander / EDH** fino a 8 giocatori e **Constructed**) insieme ai tuoi amici o contro i bot IA.
 
 ---
 
 ## 1. Requisiti di Sistema
 
 Assicurati di avere installati:
-- **Java 17+** (JDK 17 o superiore, richiesto da Card Forge `2.0.17-SNAPSHOT`).
+- **Java 17+** (JDK 17 o superiore, richiesto dal motore di gioco `2.0.17-SNAPSHOT`).
   - Verifica con: `java -version`
 - **Apache Maven 3.8+**
   - Verifica con: `mvn -version`
@@ -17,7 +17,7 @@ Assicurati di avere installati:
 
 ## 2. Come Avviare la WebApp
 
-### Passo 1 — Installazione dei moduli base di Forge (solo la prima volta)
+### Passo 1 — Installazione dei moduli base (solo la prima volta)
 Dalla cartella principale della repository (`forge/`), installa nel tuo repository Maven locale (`~/.m2`) i moduli core del motore di gioco (`forge-core`, `forge-game`, `forge-ai`, `forge-gui`):
 
 ```bash
@@ -25,7 +25,7 @@ Dalla cartella principale della repository (`forge/`), installa nel tuo reposito
 mvn -N install -DskipTests -Dcheckstyle.skip=true
 mvn -pl forge-core,forge-game,forge-ai,forge-gui install -DskipTests -Dcheckstyle.skip=true
 ```
-*(Questa operazione serve solo la prima volta o quando aggiorni i moduli core di Forge).*
+*(Questa operazione serve solo la prima volta o quando aggiorni i moduli core).*
 
 ### Passo 2 — Compilazione del Server Web (`webapp/forge-web`)
 Entra nella cartella del backend web e compila il progetto:
@@ -57,7 +57,7 @@ Al primo avvio vedrai nel terminale:
 3. Il messaggio:
    ```text
    =============================================================
-     Forge Multiplayer Web Server listening on port 8080
+     Lozzander Online — Web Server listening on port 8080
      API: http://localhost:8080/api/status
      WS:  ws://localhost:8080/ws
    =============================================================

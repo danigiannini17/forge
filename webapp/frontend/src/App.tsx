@@ -280,7 +280,7 @@ export const App: React.FC = () => {
             <Swords size={22} />
           </div>
           <div>
-            <span className="brand-title">CARD FORGE ONLINE</span>
+            <span className="brand-title">LOZZANDER ONLINE</span>
             <span className="brand-sub">
               Multiplayer Web Engine • Commander &amp; Constructed
             </span>
@@ -321,7 +321,7 @@ export const App: React.FC = () => {
                 <h2>Crea una Nuova Stanza</h2>
                 <p>
                   Configura un&apos;istanza di gioco con ID e Password opzionale per
-                  giocare con amici o Bot IA di Forge.
+                  giocare con amici o Bot IA.
                 </p>
               </div>
             </div>
@@ -489,8 +489,8 @@ export const App: React.FC = () => {
                     <h2>Stanze Attive sul Server</h2>
                     <p>
                       {serverInfo
-                        ? `Motore Forge v${serverInfo.version} • ${serverInfo.loadedCards.toLocaleString()} carte caricate`
-                        : 'Connessione al motore Forge...'}
+                        ? `Server Lozzander Online v${serverInfo.version} • ${serverInfo.loadedCards.toLocaleString()} carte caricate`
+                        : 'Connessione al server Lozzander Online...'}
                     </p>
                   </div>
                 </div>

@@ -1139,7 +1139,7 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
         {sidebarTab === 'LOG_CHAT' && (
           <div className="sidebar-body log-chat-pane">
             <div className="game-log-box">
-              <h4>Registro Azioni Forge</h4>
+              <h4>Registro Azioni</h4>
               <div className="log-entries-scroll">
                 {gameState.gameLog.length === 0 ? (
                   <div className="muted-sm">La partita è appena iniziata.</div>

@@ -187,7 +187,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             <h2>Posti al Tavolo ({room.maxPlayers} Slot)</h2>
             <p className="muted-p">
               Scegli il tuo posto, seleziona o costruisci il tuo mazzo e premi{' '}
-              <strong>Pronto</strong>. L&apos;Host può anche aggiungere Bot IA di Forge negli slot
+              <strong>Pronto</strong>. L&apos;Host può anche aggiungere Bot IA negli slot
               liberi.
             </p>
           </div>
@@ -224,7 +224,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                               {slot.isOnline ? 'Connesso' : 'Riconnessione in attesa...'}
                             </span>
                           )}
-                          {slot.type === 'AI' && <span>Bot IA Forge</span>}
+                          {slot.type === 'AI' && <span>Bot IA</span>}
                           {slot.type === 'OPEN' && (
                             <span>In attesa di un giocatore o Bot IA</span>
                           )}
