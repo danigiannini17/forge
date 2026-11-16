@@ -264,6 +264,7 @@ export interface CombatState {
 
 export interface PromptState {
   message: string;
+  notification?: string;
   card?: CardViewState;
   okEnabled: boolean;
   cancelEnabled: boolean;
@@ -285,6 +286,7 @@ export interface ModalChoiceOption {
   index: number;
   label: string;
   description?: string;
+  preselected?: boolean;
   isCard?: boolean;
   card?: CardViewState;
 }
@@ -323,6 +325,7 @@ export interface PendingModalState {
     isCard: boolean;
     id: number;
     lethalDamage?: number;
+    defaultDamage?: number;
     existingDamage?: number;
     minDamage?: number;
     card?: CardViewState;
@@ -349,6 +352,7 @@ export interface GameStatePayload {
   isMyTurn: boolean;
   hasPriority: boolean;
   gameOver: boolean;
+  winningPlayerName?: string;
   winningTeam: number;
   stormCount: number;
   monarchName?: string;

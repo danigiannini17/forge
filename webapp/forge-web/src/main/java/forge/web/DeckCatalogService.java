@@ -60,6 +60,7 @@ public class DeckCatalogService {
     private final List<CatalogDeckEntry> preconDecks = new ArrayList<>();
     private final List<CatalogDeckEntry> themeDecks = new ArrayList<>();
     private final Map<String, File> cardScriptFilesByLowerName = new ConcurrentHashMap<>();
+    private final Map<String, PaperCard> cardByLowerName = new ConcurrentHashMap<>();
     private volatile boolean catalogInitialized = false;
 
     public synchronized void initializeCatalog(String assetsDir) {
@@ -506,13 +507,31 @@ public class DeckCatalogService {
         }
     }
 
+    public void rebuildCardNameIndex() {
+        try {
+            CardDb common = FModel.getMagicDb().getCommonCards();
+            for (PaperCard pc : common.getUniqueCards()) {
+                if (pc != null && pc.getName() != null) {
+                    cardByLowerName.putIfAbsent(pc.getName().toLowerCase(Locale.ROOT), pc);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     public PaperCard resolvePaperCard(String cardName, String setCode) {
         if (cardName == null || cardName.isBlank()) {
             return null;
         }
         String clean = cardName.trim();
+        String cleanLower = clean.toLowerCase(Locale.ROOT);
         StaticData data = StaticData.instance();
         CardDb common = data.getCommonCards();
+
+        if (setCode == null || setCode.isBlank()) {
+            PaperCard cached = cardByLowerName.get(cleanLower);
+            if (cached != null) return cached;
+        }
 
         try {
             if (setCode != null && !setCode.isBlank()) {
@@ -520,24 +539,36 @@ public class DeckCatalogService {
                 if (pc != null) return pc;
             }
             PaperCard pc = data.fetchCard(clean);
-            if (pc != null) return pc;
+            if (pc != null) {
+                cardByLowerName.putIfAbsent(cleanLower, pc);
+                return pc;
+            }
         } catch (Exception ignored) {
         }
 
         PaperCard pc = common.getCard(clean);
-        if (pc != null) return pc;
+        if (pc != null) {
+            cardByLowerName.putIfAbsent(cleanLower, pc);
+            return pc;
+        }
 
         // If the card uses split syntax like "Fire // Ice", try left half or normalized name
         if (clean.contains("//")) {
             String left = clean.split("//")[0].trim();
             pc = data.fetchCard(left);
-            if (pc != null) return pc;
+            if (pc != null) {
+                cardByLowerName.putIfAbsent(cleanLower, pc);
+                return pc;
+            }
         }
 
-        // Case-insensitive search across currently loaded cards
+        // Case-insensitive search across currently loaded cards (and populate cache)
         for (PaperCard candidate : common.getUniqueCards()) {
-            if (candidate.getName().equalsIgnoreCase(clean)) {
-                return candidate;
+            if (candidate.getName() != null) {
+                cardByLowerName.putIfAbsent(candidate.getName().toLowerCase(Locale.ROOT), candidate);
+                if (candidate.getName().equalsIgnoreCase(clean)) {
+                    return candidate;
+                }
             }
         }
         return null;
@@ -659,8 +690,8 @@ public class DeckCatalogService {
         obj.addProperty("isLand", rules.getType().isLand());
         obj.addProperty("isCreature", rules.getType().isCreature());
         obj.add("colorIdentity", serializeColorSet(rules.getColorIdentity()));
-        obj.addProperty("imageUrl", buildScryfallUrlForPaperCard(pc, false));
-        obj.addProperty("fallbackImageUrl", buildScryfallNamedUrl(pc.getName(), false));
+        obj.addProperty("imageUrl", buildScryfallUrlForPaperCard(pc, false, false));
+        obj.addProperty("fallbackImageUrl", buildScryfallNamedUrl(pc.getName(), false, false));
         return obj;
     }
 
@@ -676,26 +707,35 @@ public class DeckCatalogService {
     }
 
     public static String buildScryfallUrlForPaperCard(PaperCard pc, boolean artCrop) {
+        return buildScryfallUrlForPaperCard(pc, artCrop, false);
+    }
+
+    public static String buildScryfallUrlForPaperCard(PaperCard pc, boolean artCrop, boolean backFace) {
         if (pc == null) return "";
         try {
             CardEdition ed = StaticData.instance().getEditions().get(pc.getEdition());
             if (ed != null && StringUtils.isNotBlank(ed.getScryfallCode())
                     && StringUtils.isNotBlank(pc.getCollectorNumber())
                     && !"-1".equals(pc.getCollectorNumber())) {
-                String path = ImageUtil.getScryfallDownloadUrl(pc, "", ed.getScryfallCode(), "en", artCrop);
+                String path = ImageUtil.getScryfallDownloadUrl(pc, backFace ? "back" : "", ed.getScryfallCode(), "en", artCrop);
                 return ForgeConstants.URL_PIC_SCRYFALL_DOWNLOAD + path;
             }
         } catch (Exception ignored) {
         }
-        return buildScryfallNamedUrl(pc.getName(), artCrop);
+        return buildScryfallNamedUrl(pc.getName(), artCrop, backFace);
     }
 
     public static String buildScryfallNamedUrl(String cardName, boolean artCrop) {
+        return buildScryfallNamedUrl(cardName, artCrop, false);
+    }
+
+    public static String buildScryfallNamedUrl(String cardName, boolean artCrop, boolean backFace) {
         if (cardName == null || cardName.isBlank()) return "";
         String clean = cardName.trim();
         String encoded = URLEncoder.encode(clean, StandardCharsets.UTF_8);
         String version = artCrop ? "art_crop" : "normal";
-        return "https://api.scryfall.com/cards/named?exact=" + encoded + "&format=image&version=" + version;
+        return "https://api.scryfall.com/cards/named?exact=" + encoded + "&format=image&version=" + version
+                + (backFace ? "&face=back" : "");
     }
 
     /**

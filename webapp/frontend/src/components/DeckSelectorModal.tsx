@@ -62,7 +62,7 @@ Deck
 1 Shalai, Voice of Plenty
 1 Evolution Sage
 1 Contagion Clasp
-1Contagion Engine
+1 Contagion Engine
 1 Deepglow Skate
 1 Farseek
 1 Anguished Unmaking
@@ -666,7 +666,7 @@ export const DeckSelectorModal: React.FC<DeckSelectorModalProps> = ({
             <div className="form-field">
               <div className="field-header-row">
                 <label>
-                  Lista Carte (Formato MTG Arena, MTGO o Forge `.dck` — es.{' '}
+                  Lista Carte (Formato MTG Arena, MTGO, Moxfield o <code>.dck</code> — es.{' '}
                   <code>1 Sol Ring</code>)
                 </label>
                 <div className="sample-btns">
@@ -714,8 +714,7 @@ export const DeckSelectorModal: React.FC<DeckSelectorModalProps> = ({
           <div className="deck-tab-body random-layout">
             <div className="random-card-box">
               <h3>
-                <Dice5 size={20} className="gold-icon" /> Generatore Automatico Forge (
-                <code>DeckgenUtil</code>)
+                <Dice5 size={20} className="gold-icon" /> Generatore Intelligente di Mazzi
               </h3>
               <p className="muted-p">
                 Genera istantaneamente un mazzo bilanciato scegliendo i colori di Mana

@@ -35,6 +35,7 @@ interface GameTableViewProps {
   gameState: GameStatePayload;
   chatMessages: ChatEntry[];
   onSendWs: (payload: Record<string, any>) => void;
+  onReturnToLobby: () => void;
   onLeaveRoom: () => void;
 }
 
@@ -92,6 +93,7 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
   gameState,
   chatMessages,
   onSendWs,
+  onReturnToLobby,
   onLeaveRoom,
 }) => {
   const [inspectedCard, setInspectedCard] = useState<CardViewState | null>(null);
@@ -102,6 +104,10 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
     'graveyard' | 'exile' | 'command' | 'flashback'
   >('graveyard');
   const [chatInput, setChatInput] = useState('');
+  const [confirmingConcede, setConfirmingConcede] = useState(false);
+
+  const logScrollRef = useRef<HTMLDivElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Hovered stack item for target/source highlighting
   const [hoveredStackKey, setHoveredStackKey] = useState<string | null>(null);
@@ -135,6 +141,24 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
   const opponents: PlayerViewState[] = gameState.players.filter(
     (p) => p.id !== localPlayer?.id
   );
+
+  useEffect(() => {
+    if (gameState.gameOver) {
+      setConfirmingConcede(false);
+    }
+  }, [gameState.gameOver]);
+
+  useEffect(() => {
+    if (sidebarTab === 'LOG_CHAT' && logScrollRef.current) {
+      logScrollRef.current.scrollTop = logScrollRef.current.scrollHeight;
+    }
+  }, [gameState.gameLog.length, sidebarTab]);
+
+  useEffect(() => {
+    if (sidebarTab === 'LOG_CHAT' && chatScrollRef.current) {
+      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+    }
+  }, [chatMessages.length, sidebarTab]);
 
   // Sync inspected card with prompt card if none inspected yet
   useEffect(() => {
@@ -282,8 +306,12 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
       return;
     }
     if (modal.modalType === 'CHOOSE_ABILITY' || modal.modalType === 'GET_CHOICES') {
-      if ((modal.min || 0) >= 1 && modal.options && modal.options.length > 0) {
-        setSelectedModalIndices([0]);
+      const opts = modal.options || [];
+      const preselected = opts.filter((o) => o.preselected).map((o) => o.index);
+      if (preselected.length > 0) {
+        setSelectedModalIndices(preselected);
+      } else if ((modal.min || 0) >= 1 && opts.length > 0) {
+        setSelectedModalIndices([opts[0].index]);
       } else {
         setSelectedModalIndices([]);
       }
@@ -301,7 +329,8 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
       const total = modal.totalDamageToAssign ?? modal.totalAmount ?? 0;
       const targets = modal.targets || [];
       targets.forEach((t, idx) => {
-        initMap[t.index] = idx === 0 ? total : 0;
+        initMap[t.index] =
+          t.defaultDamage !== undefined ? t.defaultDamage : idx === 0 ? total : 0;
       });
       setModalDamageMap(initMap);
     }
@@ -420,6 +449,7 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
     if (!gameState.pendingModal) return;
     onSendWs({
       type: 'MODAL_RESPONSE',
+      requestId: gameState.pendingModal.modalId,
       modalId: gameState.pendingModal.modalId,
       ...payload,
     });
@@ -523,7 +553,10 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
     return { creatures, support, landGroups, attachmentsByHostId };
   };
 
-  const localBf = partitionBattlefield(localPlayer?.zones.battlefield || []);
+  const localBf = useMemo(
+    () => partitionBattlefield(localPlayer?.zones.battlefield || []),
+    [localPlayer?.zones.battlefield]
+  );
   const isYieldActive =
     gameState.yieldState.autoYieldAll ||
     gameState.yieldState.autoYieldEndOfStep ||
@@ -645,13 +678,46 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
                 <PauseCircle size={13} /> Stop Auto-Pass
               </button>
             )}
+            {!gameState.gameOver && !localPlayer?.hasLost && (
+              confirmingConcede ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn-autopass danger"
+                    onClick={() => {
+                      setConfirmingConcede(false);
+                      onSendWs({ type: 'CONCEDE' });
+                    }}
+                    title="Conferma la resa nella partita in corso"
+                  >
+                    <Flag size={13} /> Confermi Resa?
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-autopass ghost"
+                    onClick={() => setConfirmingConcede(false)}
+                  >
+                    Annulla
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-autopass ghost"
+                  onClick={() => setConfirmingConcede(true)}
+                  title="Concedi la partita restando nella stanza per la rivincita"
+                >
+                  <Flag size={13} /> Concedi
+                </button>
+              )
+            )}
             <button
               type="button"
               className="btn-autopass ghost"
               onClick={onLeaveRoom}
-              title="Torna alla Home / Concedi"
+              title="Esci dalla stanza e torna alla Home"
             >
-              <Flag size={13} /> Esci
+              Esci
             </button>
           </div>
         </header>
@@ -945,6 +1011,12 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
               <span className="prompt-message">
                 {gameState.prompt?.message || 'In attesa della prossima azione...'}
               </span>
+              {gameState.prompt?.notification &&
+                gameState.prompt.notification !== gameState.prompt.message && (
+                  <span className="prompt-notification-sub">
+                    💡 {gameState.prompt.notification}
+                  </span>
+                )}
             </div>
 
             <div className="prompt-buttons">
@@ -1071,8 +1143,10 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
                       onMouseLeave={() => setHoveredStackKey(null)}
                       onClick={() => {
                         if (item.sourceCard) handleInspectCard(item.sourceCard);
+                        const parsedStackId = Number(item.key);
                         onSendWs({
                           type: 'SELECT_STACK_ITEM',
+                          stackItemId: Number.isNaN(parsedStackId) ? -1 : parsedStackId,
                           sourceCardId: item.sourceCard?.id ?? -1,
                         });
                       }}
@@ -1689,7 +1763,7 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
           <div className="sidebar-body log-chat-pane">
             <div className="game-log-box">
               <h4>Registro Azioni</h4>
-              <div className="log-entries-scroll">
+              <div className="log-entries-scroll" ref={logScrollRef}>
                 {gameState.gameLog.length === 0 ? (
                   <div className="muted-sm">La partita è appena iniziata.</div>
                 ) : (
@@ -1706,7 +1780,7 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
               <h4>
                 <MessageSquare size={14} /> Chat Tavolo
               </h4>
-              <div className="chat-messages-list mini">
+              <div className="chat-messages-list mini" ref={chatScrollRef}>
                 {chatMessages.map((m, idx) => (
                   <div key={idx} className="chat-bubble">
                     <span className="chat-sender">{m.sender}:</span>{' '}
@@ -1768,7 +1842,9 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
                     <button
                       type="button"
                       className="btn-secondary"
-                      onClick={() => submitModalResponse({ selectedIndex: -1 })}
+                      onClick={() =>
+                        submitModalResponse({ cancelled: true, selectedIndex: -1 })
+                      }
                     >
                       Annulla
                     </button>
@@ -1899,6 +1975,15 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
                     max={gameState.pendingModal.max}
                     value={modalTextInput}
                     onChange={(e) => setModalTextInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        submitModalResponse({
+                          value: String(modalTextInput),
+                          text: String(modalTextInput),
+                        });
+                      }
+                    }}
                     autoFocus
                   />
                 </div>
@@ -1907,11 +1992,10 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
                     type="button"
                     className="btn-primary"
                     onClick={() =>
-                      submitModalResponse(
-                        gameState.pendingModal?.inputKind === 'NUMBER'
-                          ? { value: Number(modalTextInput) }
-                          : { text: modalTextInput }
-                      )
+                      submitModalResponse({
+                        value: String(modalTextInput),
+                        text: String(modalTextInput),
+                      })
                     }
                   >
                     Conferma
@@ -1922,51 +2006,69 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
 
             {/* 5 & 6. ASSIGN_COMBAT_DAMAGE & ASSIGN_GENERIC_AMOUNT */}
             {(gameState.pendingModal.modalType === 'ASSIGN_COMBAT_DAMAGE' ||
-              gameState.pendingModal.modalType === 'ASSIGN_GENERIC_AMOUNT') && (
-              <div className="modal-choice-body">
-                <div className="choice-counter-hint">
-                  Totale da assegnare:{' '}
-                  <strong>
-                    {gameState.pendingModal.totalDamageToAssign ??
-                      gameState.pendingModal.totalAmount ??
-                      0}
-                  </strong>
+              gameState.pendingModal.modalType === 'ASSIGN_GENERIC_AMOUNT') && (() => {
+              const requiredTotal =
+                gameState.pendingModal.totalDamageToAssign ??
+                gameState.pendingModal.totalAmount ??
+                0;
+              const assignedSum = Object.values(modalDamageMap).reduce(
+                (acc, v) => acc + (Number.isFinite(v) ? v : 0),
+                0
+              );
+              const isExactSum = assignedSum === requiredTotal;
+              return (
+                <div className="modal-choice-body">
+                  <div className="choice-counter-hint">
+                    Totale richiesto: <strong>{requiredTotal}</strong>
+                    <span
+                      className={`damage-sum-status ${
+                        isExactSum ? 'ok' : 'mismatch'
+                      }`}
+                    >
+                      Assegnati: {assignedSum} / {requiredTotal}
+                    </span>
+                  </div>
+                  <div className="damage-targets-list">
+                    {(gameState.pendingModal.targets || []).map((t) => (
+                      <div key={t.index} className="damage-target-row">
+                        <span>
+                          <strong>{t.label}</strong>
+                          {t.lethalDamage !== undefined &&
+                            ` (Letale: ${t.lethalDamage})`}
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={requiredTotal}
+                          value={modalDamageMap[t.index] ?? 0}
+                          onChange={(e) =>
+                            setModalDamageMap({
+                              ...modalDamageMap,
+                              [t.index]: Math.max(0, Number(e.target.value)),
+                            })
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="modal-footer-bar">
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      disabled={!isExactSum}
+                      onClick={() =>
+                        submitModalResponse({
+                          allocations: modalDamageMap,
+                          assignments: modalDamageMap,
+                        })
+                      }
+                    >
+                      Conferma Assegnazione
+                    </button>
+                  </div>
                 </div>
-                <div className="damage-targets-list">
-                  {(gameState.pendingModal.targets || []).map((t) => (
-                    <div key={t.index} className="damage-target-row">
-                      <span>
-                        <strong>{t.label}</strong>
-                        {t.lethalDamage !== undefined &&
-                          ` (Letale: ${t.lethalDamage})`}
-                      </span>
-                      <input
-                        type="number"
-                        min={0}
-                        value={modalDamageMap[t.index] ?? 0}
-                        onChange={(e) =>
-                          setModalDamageMap({
-                            ...modalDamageMap,
-                            [t.index]: Math.max(0, Number(e.target.value)),
-                          })
-                        }
-                      />
-                    </div>
-                  ))}
-                </div>
-                <div className="modal-footer-bar">
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    onClick={() =>
-                      submitModalResponse({ assignments: modalDamageMap })
-                    }
-                  >
-                    Conferma Assegnazione
-                  </button>
-                </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         </div>
       )}
@@ -1977,16 +2079,30 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
           <div className="modal-surface game-over-modal">
             <Crown size={42} className="gold-icon" />
             <h2>Partita Conclusa!</h2>
+            {gameState.winningPlayerName && (
+              <div className="winner-banner-pill">
+                🏆 Vincitore: {gameState.winningPlayerName}
+              </div>
+            )}
             <p>
               La partita sul tavolo <strong>{gameState.title}</strong> è terminata.
+              Puoi tornare nella Lobby della stanza per una rivincita immediata o
+              uscire verso la Home.
             </p>
             <div className="modal-footer-bar">
               <button
                 type="button"
-                className="btn-primary"
+                className="btn-secondary"
                 onClick={onLeaveRoom}
               >
-                Torna alla Lobby / Home
+                Esci dalla Stanza
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={onReturnToLobby}
+              >
+                <RefreshCw size={15} /> Torna alla Lobby (Rivincita)
               </button>
             </div>
           </div>

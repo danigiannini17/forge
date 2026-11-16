@@ -3313,3 +3313,123 @@ textarea:focus {
   margin-top: 8px;
 }
 
+/* WEBSOCKET RECONNECT BANNER, HOST LOBBY CONTROLS, BATTLE DEFENSE & MODAL POLISH */
+.ws-reconnect-banner {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 120;
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid var(--gold-main);
+  color: var(--gold-bright);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 14px;
+  border-radius: 999px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.65);
+  pointer-events: none;
+}
+
+.section-heading.between-wrap {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.host-lobby-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mtg-card-defense {
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  background: rgba(12, 15, 22, 0.94);
+  border: 1px solid #38bdf8;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  color: #bae6fd;
+  z-index: 5;
+}
+
+.prompt-notification-sub {
+  font-size: 11.5px;
+  color: var(--gold-bright);
+  background: rgba(212, 169, 89, 0.14);
+  border: 1px solid rgba(212, 169, 89, 0.35);
+  padding: 2px 7px;
+  border-radius: 4px;
+}
+
+.damage-targets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.damage-target-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--bg-surface-2);
+  border: 1px solid var(--border-subtle);
+}
+
+.damage-target-row input[type='number'] {
+  width: 82px;
+  text-align: center;
+}
+
+.damage-sum-status {
+  margin-left: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.damage-sum-status.ok {
+  background: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+}
+
+.damage-sum-status.mismatch {
+  background: rgba(239, 68, 68, 0.22);
+  color: #fca5a5;
+}
+
+.game-over-modal {
+  width: min(500px, 92vw);
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+}
+
+.winner-banner-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--gold-dim);
+  border: 1px solid var(--gold-main);
+  color: var(--gold-bright);
+  font-size: 13.5px;
+  font-weight: 800;
+  margin: 4px 0;
+}

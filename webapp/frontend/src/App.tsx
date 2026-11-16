@@ -12,6 +12,7 @@ import {
   getOrCreateSessionToken,
   getSavedNickname,
   joinRoom,
+  leaveRoomApi,
   normalizeGameState,
   normalizeRoomState,
   saveNickname,
@@ -246,22 +247,44 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleLeaveRoom = () => {
+  const handleLeaveRoom = async () => {
+    const roomIdToLeave = activeRoom?.roomId;
     setActiveRoom(null);
     setGameState(null);
     setGlobalError(null);
+    if (roomIdToLeave) {
+      try {
+        await leaveRoomApi(roomIdToLeave, sessionToken);
+      } catch {
+        // Ignore transient network failure when leaving
+      }
+    }
     refreshLobbyDirectory();
+  };
+
+  const handleReturnToLobby = () => {
+    setGameState(null);
+    setGlobalError(null);
+    sendWsMessage({ type: 'REQUEST_STATE' });
   };
 
   // RENDER 1: ACTIVE GAME TABLE
   if (activeRoom && (activeRoom.status === 'IN_GAME' || gameState) && gameState) {
     return (
-      <GameTableView
-        gameState={gameState}
-        chatMessages={chatMessages}
-        onSendWs={sendWsMessage}
-        onLeaveRoom={handleLeaveRoom}
-      />
+      <>
+        {!wsConnected && (
+          <div className="ws-reconnect-banner">
+            ⟳ Riconnessione al tavolo in corso...
+          </div>
+        )}
+        <GameTableView
+          gameState={gameState}
+          chatMessages={chatMessages}
+          onSendWs={sendWsMessage}
+          onReturnToLobby={handleReturnToLobby}
+          onLeaveRoom={handleLeaveRoom}
+        />
+      </>
     );
   }
 
@@ -269,6 +292,11 @@ export const App: React.FC = () => {
   if (activeRoom) {
     return (
       <div className="app-wrapper">
+        {!wsConnected && (
+          <div className="ws-reconnect-banner">
+            ⟳ Connessione in tempo reale in corso...
+          </div>
+        )}
         <LobbyView
           room={activeRoom}
           sessionToken={sessionToken}
@@ -474,6 +502,7 @@ export const App: React.FC = () => {
                   <div className="form-field">
                     <label>Password (se richiesta)</label>
                     <input
+                      id="join-password-input"
                       type="password"
                       placeholder="Password stanza..."
                       value={joinPasswordInput}
@@ -568,8 +597,9 @@ export const App: React.FC = () => {
                           r.canReconnect ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'
                         }
                         onClick={() => {
-                          if (r.hasPassword && !r.canReconnect) {
+                          if (r.hasPassword && !r.canReconnect && !joinPasswordInput.trim()) {
                             setJoinRoomIdInput(r.roomId);
+                            document.getElementById('join-password-input')?.focus();
                           } else {
                             handleJoinRoomSubmit(r.roomId, joinPasswordInput);
                           }

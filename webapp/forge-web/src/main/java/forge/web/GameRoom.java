@@ -11,6 +11,8 @@ import forge.game.GameView;
 import forge.gamemodes.match.HostedMatch;
 import forge.gamemodes.match.LobbySlot;
 import forge.gamemodes.match.LobbySlotType;
+import forge.gamemodes.match.NextGameDecision;
+import forge.interfaces.IGameController;
 import forge.item.PaperCard;
 import forge.util.NameGenerator;
 import io.netty.channel.Channel;
@@ -62,6 +64,7 @@ public class GameRoom {
 
     private final List<ChatMessage> chatHistory = Collections.synchronizedList(new ArrayList<>());
     private final AtomicBoolean broadcastScheduled = new AtomicBoolean(false);
+    private final AtomicBoolean matchEnding = new AtomicBoolean(false);
 
     public static String sanitizeText(String raw, int maxLen, String defaultVal) {
         if (raw == null) return defaultVal;
@@ -273,9 +276,19 @@ public class GameRoom {
     public synchronized void leaveRoom(String sessionToken) {
         if (sessionToken == null || sessionToken.isBlank()) return;
         Integer slotIdx = getSlotForSession(sessionToken);
-        if (slotIdx != null && !lobby.isMatchActive()) {
+        if (slotIdx != null) {
+            if (lobby.isMatchActive()) {
+                WebGuiGame gui = slotToGui.get(slotIdx);
+                if (gui != null) {
+                    gui.concedeIfActive();
+                }
+                String leaverName = tokenToNickname.getOrDefault(sessionToken, "Giocatore");
+                addSystemChat(leaverName + " ha concesso e lasciato il tavolo.");
+                broadcastRoomState();
+                return;
+            }
             LobbySlot slot = lobby.getSlot(slotIdx);
-            String oldName = slot != null ? slot.getName() : "Giocatore";
+            String oldName = slot != null && slot.getName() != null ? slot.getName() : "Giocatore";
             if (slot != null) {
                 slot.setType(LobbySlotType.OPEN);
                 slot.setName(null);
@@ -284,7 +297,10 @@ public class GameRoom {
                 slot.setIsReady(false);
             }
             slotToToken.remove(slotIdx);
-            slotToGui.remove(slotIdx);
+            WebGuiGame removedGui = slotToGui.remove(slotIdx);
+            if (removedGui != null) {
+                removedGui.shutdown();
+            }
             addSystemChat(oldName + " ha lasciato il posto " + (slotIdx + 1) + ".");
             if (sessionToken.equals(hostSessionToken) && !slotToToken.isEmpty()) {
                 hostSessionToken = slotToToken.values().iterator().next();
@@ -490,6 +506,7 @@ public class GameRoom {
 
         // Count active players and ensure decks & ready flags
         int activeCount = 0;
+        int humanCount = 0;
         Set<Integer> distinctTeams = new HashSet<>();
         for (int i = 0; i < lobby.getNumberOfSlots(); i++) {
             LobbySlot slot = lobby.getSlot(i);
@@ -497,6 +514,9 @@ public class GameRoom {
                 continue;
             }
             activeCount++;
+            if (slot.getType() == LobbySlotType.REMOTE || slot.getType() == LobbySlotType.LOCAL) {
+                humanCount++;
+            }
             distinctTeams.add(slot.getTeam());
             slot.setIsReady(true);
             if (slot.getName() == null || slot.getName().isBlank()) {
@@ -510,6 +530,9 @@ public class GameRoom {
             ensureCommanderSectionIfNeeded(slot.getDeck());
         }
 
+        if (humanCount < 1) {
+            return "Serve almeno 1 giocatore umano seduto al tavolo per avviare la partita.";
+        }
         if (activeCount < 2) {
             return "Servono almeno 2 giocatori (umani o Bot IA) per avviare la partita.";
         }
@@ -519,6 +542,8 @@ public class GameRoom {
                 if (slot != null) slot.setTeam(i);
             }
         }
+
+        matchEnding.set(false);
 
         // Reset and create fresh WebGuiGame instances for all human slots
         for (WebGuiGame oldGui : slotToGui.values()) {
@@ -545,15 +570,33 @@ public class GameRoom {
         return null; // success
     }
 
+    /**
+     * Broadcasts the final Game Over snapshot to all players and closes {@link HostedMatch}
+     * via {@link NextGameDecision#QUIT} so the room lobby becomes ready for rematches.
+     */
+    public void notifyGameFinished(IGameController controller) {
+        if (!matchEnding.compareAndSet(false, true)) {
+            return;
+        }
+        broadcastGameStateImmediate();
+        if (controller != null) {
+            BROADCAST_SCHEDULER.schedule(() -> {
+                try {
+                    controller.nextGameDecision(NextGameDecision.QUIT);
+                } catch (Exception ignored) {
+                }
+            }, 80, TimeUnit.MILLISECONDS);
+        }
+    }
+
     public void onGameStarted() {
         broadcastRoomState();
         broadcastGameState();
     }
 
     public void onMatchOver() {
-        addSystemChat("La partita è terminata!");
+        addSystemChat("La partita è terminata! La stanza è pronta per una rivincita.");
         broadcastRoomState();
-        broadcastGameState();
     }
 
     public void addChatMessage(String sender, String text) {
@@ -593,15 +636,15 @@ public class GameRoom {
             return;
         }
         sessionChannels.computeIfAbsent(sessionToken, k -> ConcurrentHashMap.newKeySet()).add(channel);
-        channel.closeFuture().addListener(f -> {
-            Set<Channel> set = sessionChannels.get(sessionToken);
-            if (set != null) {
-                set.remove(channel);
-            }
-        });
+        channel.closeFuture().addListener(f ->
+                sessionChannels.computeIfPresent(sessionToken, (k, set) -> {
+                    set.remove(channel);
+                    return set.isEmpty() ? null : set;
+                })
+        );
         // Send initial room state & game state immediately
         sendToChannel(channel, buildRoomStateEnvelope(sessionToken));
-        if (lobby.isMatchActive() || lobby.getHostedMatch() != null) {
+        if (lobby.isMatchActive()) {
             sendToChannel(channel, buildGameStateEnvelope(sessionToken));
         }
     }

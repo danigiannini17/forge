@@ -64,7 +64,7 @@ export function normalizeRoomState(raw: any): RoomState {
       slotIndex: s.slotIndex ?? s.index ?? idx,
       type: s.type || 'OPEN',
       name: s.name || '',
-      team: (s.team ?? idx) + (s.team === 0 ? 1 : 0),
+      team: Math.max(1, Math.min(8, (s.team ?? idx) + 1)),
       isReady: Boolean(s.isReady ?? s.ready),
       isArchenemy: Boolean(s.isArchenemy),
       deckName: s.deckName || summaryObj?.name || 'Mazzo Default',
@@ -295,8 +295,8 @@ export function normalizeGameState(raw: any): GameStatePayload | null {
   const promptRaw = raw.prompt || {};
 
   const stackRaw: any[] = Array.isArray(raw.stack) ? raw.stack : [];
-  const stack: StackItemState[] = stackRaw.map((s) => ({
-    key: String(s.key ?? s.id ?? Math.random()),
+  const stack: StackItemState[] = stackRaw.map((s, idx) => ({
+    key: String(s.key ?? s.id ?? `stk_${idx}`),
     text: s.text || '',
     optionalTrigger: Boolean(s.optionalTrigger ?? s.isTrigger),
     isTrigger: Boolean(s.isTrigger ?? s.optionalTrigger),
@@ -348,25 +348,56 @@ export function normalizeGameState(raw: any): GameStatePayload | null {
   const yieldRaw = raw.yieldState || {};
 
   let pendingModal = raw.pendingModal || null;
-  if (pendingModal && Array.isArray(pendingModal.options)) {
+  if (pendingModal) {
+    const parsedInitialNum =
+      pendingModal.initialValue !== undefined
+        ? Number(pendingModal.initialValue)
+        : pendingModal.isNumeric &&
+          pendingModal.initialInput !== undefined &&
+          pendingModal.initialInput !== ''
+        ? Number(pendingModal.initialInput)
+        : 0;
+
     pendingModal = {
       ...pendingModal,
-      modalId: pendingModal.modalId || 'modal-active',
+      modalId: pendingModal.requestId || pendingModal.modalId || 'modal-active',
       modalType: pendingModal.modalType || pendingModal.type,
-      options: pendingModal.options.map((opt: any, idx: number) => ({
-        index: opt.index ?? idx,
-        label: opt.label || opt.name || String(opt),
-        description: opt.description || '',
-        isCard: Boolean(opt.isCard || opt.card),
-        card: opt.card ? normalizeCardView(opt.card) : undefined,
-      })),
-    };
-  } else if (pendingModal) {
-    pendingModal = {
-      ...pendingModal,
-      modalId: pendingModal.modalId || 'modal-active',
-      modalType: pendingModal.modalType || pendingModal.type,
+      yesText: pendingModal.yesText || pendingModal.yesLabel,
+      noText: pendingModal.noText || pendingModal.noLabel,
+      defaultYes: Boolean(pendingModal.defaultYes ?? pendingModal.defaultIsYes),
+      inputKind:
+        pendingModal.inputKind || (pendingModal.isNumeric ? 'NUMBER' : 'TEXT'),
+      initialValue: Number.isNaN(parsedInitialNum) ? 0 : parsedInitialNum,
+      defaultText: pendingModal.defaultText ?? pendingModal.initialInput ?? '',
+      totalDamageToAssign:
+        pendingModal.totalDamageToAssign ??
+        pendingModal.totalDamage ??
+        pendingModal.totalAmount,
       card: pendingModal.card ? normalizeCardView(pendingModal.card) : undefined,
+      attacker: pendingModal.attacker
+        ? normalizeCardView(pendingModal.attacker)
+        : undefined,
+      options: Array.isArray(pendingModal.options)
+        ? pendingModal.options.map((opt: any, idx: number) => ({
+            index: opt.index ?? idx,
+            label: opt.label || opt.name || String(opt),
+            description: opt.description || '',
+            preselected: Boolean(opt.preselected),
+            isCard: Boolean(opt.isCard || opt.card),
+            card: opt.card ? normalizeCardView(opt.card) : undefined,
+          }))
+        : undefined,
+      targets: Array.isArray(pendingModal.targets)
+        ? pendingModal.targets.map((t: any, idx: number) => ({
+            index: t.index ?? idx,
+            id: t.id ?? idx,
+            label: t.label || t.name || 'Bersaglio',
+            isCard: Boolean(t.isCard || t.card),
+            lethalDamage: t.lethalDamage,
+            defaultDamage: t.defaultDamage ?? t.defaultAmount ?? 0,
+            card: t.card ? normalizeCardView(t.card) : undefined,
+          }))
+        : undefined,
     };
   }
 
@@ -376,7 +407,7 @@ export function normalizeGameState(raw: any): GameStatePayload | null {
     roomId: raw.roomId || '',
     slotIndex: raw.slotIndex ?? 0,
     localPlayerName: localViewer?.name || 'Planeswalker',
-    title: raw.title || 'Tavolo Forge',
+    title: raw.title || 'Tavolo Lozzander Online',
     gameFormat: raw.gameFormat || raw.gameType || 'Commander',
     isCommander: Boolean(raw.isCommander),
     turn: raw.turn ?? 1,
@@ -389,6 +420,7 @@ export function normalizeGameState(raw: any): GameStatePayload | null {
     ),
     hasPriority: Boolean(raw.hasPriority ?? localViewer?.hasPriority),
     gameOver: Boolean(raw.gameOver ?? raw.isGameOver),
+    winningPlayerName: raw.winningPlayerName || '',
     winningTeam: raw.winningTeam ?? -1,
     stormCount: raw.stormCount ?? 0,
     undoAvailable: Boolean(raw.undoAvailable ?? promptRaw.undoAvailable),
@@ -398,6 +430,7 @@ export function normalizeGameState(raw: any): GameStatePayload | null {
     isDeclareBlockers: phase === 'COMBAT_DECLARE_BLOCKERS',
     prompt: {
       message: promptRaw.message || '',
+      notification: promptRaw.notification || '',
       card: promptRaw.card ? normalizeCardView(promptRaw.card) : undefined,
       okEnabled: Boolean(promptRaw.okEnabled ?? true),
       cancelEnabled: Boolean(promptRaw.cancelEnabled ?? true),
@@ -560,10 +593,50 @@ export async function joinRoom(
   return { room, hasActiveGame: Boolean(raw.hasActiveGame || room.status === 'IN_GAME') };
 }
 
+export async function leaveRoomApi(roomId: string, sessionToken: string): Promise<void> {
+  await requestJson(`/api/rooms/${encodeURIComponent(roomId)}/leave`, {
+    method: 'POST',
+    body: JSON.stringify({ sessionToken }),
+  });
+}
+
+export async function updateRoomFormatApi(
+  roomId: string,
+  sessionToken: string,
+  isCommander: boolean
+): Promise<RoomState> {
+  const raw = await requestJson<any>(`/api/rooms/${encodeURIComponent(roomId)}/format`, {
+    method: 'POST',
+    body: JSON.stringify({ sessionToken, isCommander }),
+  });
+  return normalizeRoomState(raw.room);
+}
+
+export async function updateRoomSlotsCountApi(
+  roomId: string,
+  sessionToken: string,
+  add: boolean
+): Promise<RoomState> {
+  const raw = await requestJson<any>(
+    `/api/rooms/${encodeURIComponent(roomId)}/slots-count`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ sessionToken, add }),
+    }
+  );
+  return normalizeRoomState(raw.room);
+}
+
+let cachedDeckCatalog: DeckCatalogResponse | null = null;
+
 export async function fetchDeckCatalog(): Promise<DeckCatalogResponse> {
+  if (cachedDeckCatalog) {
+    return cachedDeckCatalog;
+  }
   const raw = await requestJson<any>('/api/decks/catalog?limit=600');
   if (raw.commanderDecks) {
-    return raw as DeckCatalogResponse;
+    cachedDeckCatalog = raw as DeckCatalogResponse;
+    return cachedDeckCatalog;
   }
   const allDecks: any[] = Array.isArray(raw.decks) ? raw.decks : [];
   const commanderDecks: DeckCatalogEntry[] = [];
@@ -588,7 +661,8 @@ export async function fetchDeckCatalog(): Promise<DeckCatalogResponse> {
     else preconDecks.push(entry);
   });
 
-  return { commanderDecks, preconDecks, themeDecks, competitiveDecks };
+  cachedDeckCatalog = { commanderDecks, preconDecks, themeDecks, competitiveDecks };
+  return cachedDeckCatalog;
 }
 
 export async function fetchDeckPreview(deckId: string): Promise<{ deck: DeckSummary }> {
@@ -633,7 +707,7 @@ export async function applyDeckToRoomSlot(
     main?: { name: string; setCode?: string; count: number }[];
     sideboard?: { name: string; setCode?: string; count: number }[];
   }
-): Promise<{ ok: boolean; deckSummary: DeckSummary; room: RoomState }> {
+): Promise<{ ok: boolean; deckSummary: DeckSummary; room: RoomState; warnings: string[] }> {
   const raw = await requestJson<any>(`/api/rooms/${encodeURIComponent(roomId)}/deck`, {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -642,6 +716,7 @@ export async function applyDeckToRoomSlot(
     ok: true,
     deckSummary: normalizeDeckSummary(raw.deckSummary || raw.deck),
     room: normalizeRoomState(raw.room),
+    warnings: Array.isArray(raw.warnings) ? raw.warnings : [],
   };
 }
 

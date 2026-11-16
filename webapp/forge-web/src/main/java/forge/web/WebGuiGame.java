@@ -196,9 +196,21 @@ public class WebGuiGame extends AbstractGuiGame {
         notifyStateChanged();
     }
 
+    public void concedeIfActive() {
+        actionExecutor.submit(() -> {
+            try {
+                IGameController ctrl = getGameController();
+                if (ctrl != null) {
+                    ctrl.concede();
+                }
+            } catch (Exception ignored) {
+            }
+        });
+    }
+
     @Override
     public void finishGame() {
-        notifyStateChanged();
+        room.notifyGameFinished(getGameController());
     }
 
     @Override
@@ -279,6 +291,7 @@ public class WebGuiGame extends AbstractGuiGame {
     private JsonObject waitForModalResponse(String modalType, JsonObject payload) {
         String reqId = "modal-" + modalSeq.getAndIncrement();
         payload.addProperty("requestId", reqId);
+        payload.addProperty("modalId", reqId);
         payload.addProperty("modalType", modalType);
         PendingModal modal = new PendingModal(reqId, modalType, payload);
         this.currentModal = modal;
@@ -309,6 +322,8 @@ public class WebGuiGame extends AbstractGuiGame {
         JsonObject payload = new JsonObject();
         payload.addProperty("title", "Scegli Abilità / Magia da giocare");
         payload.addProperty("message", hostCard != null ? hostCard.getName() : "Seleziona l'abilità:");
+        payload.addProperty("min", 0);
+        payload.addProperty("max", 1);
         if (hostCard != null) {
             payload.add("card", GameStateSerializer.serializeCard(
                     hostCard, getCurrentPlayer(), null, null, null, null, null, null, true
@@ -423,10 +438,13 @@ public class WebGuiGame extends AbstractGuiGame {
         payload.addProperty("title", c != null ? c.getName() : "Conferma");
         payload.addProperty("message", question != null ? question : "Confermi?");
         payload.addProperty("defaultIsYes", defaultIsYes);
+        payload.addProperty("defaultYes", defaultIsYes);
         String yesText = (options != null && !options.isEmpty()) ? options.get(0) : "Sì";
         String noText = (options != null && options.size() > 1) ? options.get(1) : "No";
         payload.addProperty("yesLabel", yesText);
         payload.addProperty("noLabel", noText);
+        payload.addProperty("yesText", yesText);
+        payload.addProperty("noText", noText);
         if (c != null) {
             payload.add("card", GameStateSerializer.serializeCard(c, getCurrentPlayer(), null, null, null, null, null, null, true));
         }
@@ -472,13 +490,21 @@ public class WebGuiGame extends AbstractGuiGame {
         payload.addProperty("title", title != null ? title : "Inserisci valore");
         payload.addProperty("message", message != null ? message : "");
         payload.addProperty("initialInput", initialInput != null ? initialInput : "");
+        payload.addProperty("defaultText", initialInput != null ? initialInput : "");
         payload.addProperty("isNumeric", isNumeric);
+        payload.addProperty("inputKind", isNumeric ? "NUMBER" : "TEXT");
 
         JsonObject resp = waitForModalResponse("INPUT_TEXT", payload);
         if (resp == null || (resp.has("cancelled") && resp.get("cancelled").getAsBoolean())) {
             return null;
         }
-        return resp.has("value") ? resp.get("value").getAsString() : initialInput;
+        if (resp.has("value") && !resp.get("value").isJsonNull()) {
+            return resp.get("value").getAsString();
+        }
+        if (resp.has("text") && !resp.get("text").isJsonNull()) {
+            return resp.get("text").getAsString();
+        }
+        return initialInput;
     }
 
     @Override
@@ -511,22 +537,29 @@ public class WebGuiGame extends AbstractGuiGame {
             return defaultMap;
         }
 
+        boolean attackerHasDeathtouch = attacker != null
+                && attacker.getCurrentState() != null
+                && attacker.getCurrentState().hasDeathtouch();
+
         // Compute standard lethal damage distribution as default
         int remaining = damage;
+        List<Integer> lethalList = new ArrayList<>();
         for (int i = 0; i < blockers.size(); i++) {
             CardView b = blockers.get(i);
             int toughness = b.getCurrentState() != null ? b.getCurrentState().getToughness() : 1;
             int alreadyMarked = b.getDamage();
-            int lethal = Math.max(1, toughness - alreadyMarked);
+            int lethal = attackerHasDeathtouch ? 1 : Math.max(1, toughness - alreadyMarked);
+            lethalList.add(lethal);
             int assigned = (i == blockers.size() - 1 && defender == null)
                     ? remaining
                     : Math.min(remaining, lethal);
             defaultMap.put(b, assigned);
             remaining -= assigned;
         }
-        if (defender instanceof CardView defCard) {
-            defaultMap.put(defCard, Math.max(0, remaining));
-        } else if (defender == null && remaining > 0 && !blockers.isEmpty()) {
+        // Forge's PlayerControllerHuman expects key `null` for the defending entity (Player, Planeswalker, or Battle)
+        if (defender != null) {
+            defaultMap.put(null, Math.max(0, remaining));
+        } else if (remaining > 0 && !blockers.isEmpty()) {
             CardView last = blockers.get(blockers.size() - 1);
             defaultMap.put(last, defaultMap.getOrDefault(last, 0) + remaining);
         }
@@ -539,51 +572,73 @@ public class WebGuiGame extends AbstractGuiGame {
         JsonObject payload = new JsonObject();
         payload.addProperty("title", "Assegna " + damage + " danni da combattimento");
         payload.addProperty("totalDamage", damage);
+        payload.addProperty("totalDamageToAssign", damage);
         PlayerView viewer = getCurrentPlayer();
         if (attacker != null) {
             payload.add("attacker", GameStateSerializer.serializeCard(attacker, viewer, null, null, null, null, null, null, true));
         }
         JsonArray targetsArr = new JsonArray();
-        for (CardView b : blockers) {
+        for (int i = 0; i < blockers.size(); i++) {
+            CardView b = blockers.get(i);
             JsonObject tObj = new JsonObject();
+            tObj.addProperty("index", i);
             tObj.addProperty("id", b.getId());
             tObj.addProperty("name", b.getName());
+            tObj.addProperty("label", b.getName());
+            tObj.addProperty("isCard", true);
+            tObj.addProperty("lethalDamage", lethalList.get(i));
             tObj.addProperty("defaultDamage", defaultMap.getOrDefault(b, 0));
             tObj.add("card", GameStateSerializer.serializeCard(b, viewer, null, null, null, null, null, null, true));
             targetsArr.add(tObj);
         }
         if (defender != null) {
             JsonObject defObj = new JsonObject();
+            defObj.addProperty("index", blockers.size());
             defObj.addProperty("id", defender.getId());
-            defObj.addProperty("name", defender.getName() + " (Difensore / Trample)");
+            String defLabel = defender.getName() + " (Difensore / Travolgere)";
+            defObj.addProperty("name", defLabel);
+            defObj.addProperty("label", defLabel);
             defObj.addProperty("isDefender", true);
+            defObj.addProperty("isCard", defender instanceof CardView);
             defObj.addProperty("defaultDamage", Math.max(0, remaining));
             targetsArr.add(defObj);
         }
         payload.add("targets", targetsArr);
 
         JsonObject resp = waitForModalResponse("ASSIGN_COMBAT_DAMAGE", payload);
-        if (resp != null && resp.has("allocations") && resp.get("allocations").isJsonObject()) {
-            JsonObject alloc = resp.getAsJsonObject("allocations");
+        JsonObject alloc = null;
+        if (resp != null) {
+            if (resp.has("allocations") && resp.get("allocations").isJsonObject()) {
+                alloc = resp.getAsJsonObject("allocations");
+            } else if (resp.has("assignments") && resp.get("assignments").isJsonObject()) {
+                alloc = resp.getAsJsonObject("assignments");
+            }
+        }
+        if (alloc != null) {
             Map<CardView, Integer> customMap = new LinkedHashMap<>();
             int sum = 0;
-            for (CardView b : blockers) {
-                String key = String.valueOf(b.getId());
-                int val = alloc.has(key) ? Math.max(0, alloc.get(key).getAsInt()) : defaultMap.getOrDefault(b, 0);
+            for (int i = 0; i < blockers.size(); i++) {
+                CardView b = blockers.get(i);
+                String idxKey = String.valueOf(i);
+                String idKey = String.valueOf(b.getId());
+                int val = alloc.has(idxKey)
+                        ? Math.max(0, alloc.get(idxKey).getAsInt())
+                        : (alloc.has(idKey) ? Math.max(0, alloc.get(idKey).getAsInt()) : defaultMap.getOrDefault(b, 0));
                 customMap.put(b, val);
                 sum += val;
             }
-            if (defender != null && alloc.has(String.valueOf(defender.getId()))) {
-                int defVal = Math.max(0, alloc.get(String.valueOf(defender.getId())).getAsInt());
-                customMap.put(defender instanceof CardView cv ? cv : null, defVal);
+            if (defender != null) {
+                String defIdxKey = String.valueOf(blockers.size());
+                String defIdKey = String.valueOf(defender.getId());
+                int defVal = alloc.has(defIdxKey)
+                        ? Math.max(0, alloc.get(defIdxKey).getAsInt())
+                        : (alloc.has(defIdKey) ? Math.max(0, alloc.get(defIdKey).getAsInt()) : defaultMap.getOrDefault(null, 0));
+                customMap.put(null, defVal);
                 sum += defVal;
             }
             if (sum == damage) {
                 return customMap;
             }
-        }
-        if (defender != null && remaining > 0) {
-            defaultMap.put(defender instanceof CardView cv ? cv : null, remaining);
         }
         return defaultMap;
     }
@@ -613,29 +668,42 @@ public class WebGuiGame extends AbstractGuiGame {
         JsonObject payload = new JsonObject();
         payload.addProperty("title", "Distribuisci " + amount + " " + (amountLabel != null ? amountLabel : ""));
         payload.addProperty("totalAmount", amount);
+        payload.addProperty("totalDamageToAssign", amount);
         payload.addProperty("atLeastOne", atLeastOne);
         JsonArray tArr = new JsonArray();
         for (int i = 0; i < keys.size(); i++) {
             Object k = keys.get(i);
             JsonObject tObj = new JsonObject();
             tObj.addProperty("index", i);
+            tObj.addProperty("id", i);
             String label = k instanceof Byte colorByte
                     ? MagicColor.toLongString(colorByte)
                     : String.valueOf(k);
             tObj.addProperty("label", label);
             tObj.addProperty("defaultAmount", result.getOrDefault(k, 0));
+            tObj.addProperty("defaultDamage", result.getOrDefault(k, 0));
             tArr.add(tObj);
         }
         payload.add("targets", tArr);
 
         JsonObject resp = waitForModalResponse("ASSIGN_GENERIC_AMOUNT", payload);
-        if (resp != null && resp.has("allocations") && resp.get("allocations").isJsonObject()) {
-            JsonObject alloc = resp.getAsJsonObject("allocations");
+        JsonObject alloc = null;
+        if (resp != null) {
+            if (resp.has("allocations") && resp.get("allocations").isJsonObject()) {
+                alloc = resp.getAsJsonObject("allocations");
+            } else if (resp.has("assignments") && resp.get("assignments").isJsonObject()) {
+                alloc = resp.getAsJsonObject("assignments");
+            }
+        }
+        if (alloc != null) {
             Map<Object, Integer> custom = new LinkedHashMap<>();
             int sum = 0;
             for (int i = 0; i < keys.size(); i++) {
                 String kStr = String.valueOf(i);
                 int v = alloc.has(kStr) ? Math.max(0, alloc.get(kStr).getAsInt()) : 0;
+                if (atLeastOne && v < 1) {
+                    return result;
+                }
                 custom.put(keys.get(i), v);
                 sum += v;
             }
@@ -724,6 +792,14 @@ public class WebGuiGame extends AbstractGuiGame {
         JsonObject p = new JsonObject();
         p.addProperty("message", promptMessage);
         p.addProperty("promptCardId", promptCardId);
+        if (promptCardId != -1) {
+            CardView cv = findCardViewById(getGameView(), promptCardId);
+            if (cv != null) {
+                p.add("card", GameStateSerializer.serializeCard(
+                        cv, getCurrentPlayer(), null, null, null, null, null, null, false
+                ));
+            }
+        }
         p.addProperty("okLabel", okLabel);
         p.addProperty("cancelLabel", cancelLabel);
         p.addProperty("okEnabled", okEnabled);
@@ -789,11 +865,14 @@ public class WebGuiGame extends AbstractGuiGame {
         if ("MODAL_RESPONSE".equals(action)) {
             PendingModal modal = this.currentModal;
             if (modal != null) {
+                String respReqId = "";
                 if (msg.has("requestId") && !msg.get("requestId").isJsonNull()) {
-                    String respReqId = msg.get("requestId").getAsString();
-                    if (!respReqId.isEmpty() && !modal.requestId.equals(respReqId)) {
-                        return;
-                    }
+                    respReqId = msg.get("requestId").getAsString();
+                } else if (msg.has("modalId") && !msg.get("modalId").isJsonNull()) {
+                    respReqId = msg.get("modalId").getAsString();
+                }
+                if (!respReqId.isEmpty() && !modal.requestId.equals(respReqId)) {
+                    return;
                 }
                 modal.future.complete(msg);
             }

@@ -541,10 +541,12 @@ public class GameStateSerializer {
             cObj.add("keywords", kwArr);
 
             String imageKey = state.getTrackableImageKey();
-            String imageUrl = resolveImageUrl(imageKey, oracleName);
+            boolean isCurrentBack = (imageKey != null && imageKey.endsWith(forge.ImageKeys.BACKFACE_POSTFIX))
+                    || (state.getState() != null && state.getState() != forge.card.CardStateName.Original);
+            String imageUrl = resolveImageUrl(imageKey, oracleName, isCurrentBack);
             cObj.addProperty("imageUrl", imageUrl);
-            cObj.addProperty("fallbackImageUrl", DeckCatalogService.buildScryfallNamedUrl(oracleName, false));
-            cObj.addProperty("artCropUrl", DeckCatalogService.buildScryfallNamedUrl(oracleName, true));
+            cObj.addProperty("fallbackImageUrl", DeckCatalogService.buildScryfallNamedUrl(oracleName, false, isCurrentBack));
+            cObj.addProperty("artCropUrl", DeckCatalogService.buildScryfallNamedUrl(oracleName, true, isCurrentBack));
         }
 
         // Alternate face (DFC / Transform / Modal DFC / Adventure)
@@ -552,6 +554,9 @@ public class GameStateSerializer {
             CardStateView alt = cv.getAlternateState();
             String altName = alt.getName() != null ? alt.getName() : "";
             String altOracleName = alt.getOracleName() != null && !alt.getOracleName().isEmpty() ? alt.getOracleName() : altName;
+            String altKey = alt.getTrackableImageKey();
+            boolean isAltBack = (altKey != null && altKey.endsWith(forge.ImageKeys.BACKFACE_POSTFIX))
+                    || (alt.getState() != null && alt.getState() != forge.card.CardStateName.Original);
             cObj.addProperty("hasAlternateState", true);
             cObj.addProperty("alternateName", altName);
             cObj.addProperty("alternateManaCost", alt.getManaCost() != null ? alt.getManaCost().toString() : "");
@@ -559,7 +564,7 @@ public class GameStateSerializer {
             cObj.addProperty("alternateOracleText", alt.getOracleText() != null ? alt.getOracleText() : "");
             cObj.addProperty("alternatePower", alt.getPower());
             cObj.addProperty("alternateToughness", alt.getToughness());
-            cObj.addProperty("alternateImageUrl", resolveImageUrl(alt.getTrackableImageKey(), altOracleName));
+            cObj.addProperty("alternateImageUrl", resolveImageUrl(altKey, altOracleName, isAltBack));
         } else {
             cObj.addProperty("hasAlternateState", false);
         }
@@ -667,18 +672,22 @@ public class GameStateSerializer {
         return sObj;
     }
 
-    private static String resolveImageUrl(String imageKey, String oracleName) {
+    private static String resolveImageUrl(String imageKey, String oracleName, boolean backFace) {
         if (imageKey != null && imageKey.startsWith("c:")) {
             try {
-                PaperCard pc = ImageUtil.getPaperCardFromImageKey(imageKey);
+                boolean keyHasAlt = imageKey.endsWith(forge.ImageKeys.BACKFACE_POSTFIX);
+                String cleanKey = keyHasAlt
+                        ? imageKey.substring(0, imageKey.length() - forge.ImageKeys.BACKFACE_POSTFIX.length())
+                        : imageKey;
+                PaperCard pc = ImageUtil.getPaperCardFromImageKey(cleanKey);
                 if (pc != null) {
-                    return DeckCatalogService.buildScryfallUrlForPaperCard(pc, false);
+                    return DeckCatalogService.buildScryfallUrlForPaperCard(pc, false, backFace || keyHasAlt);
                 }
             } catch (Exception ignored) {
             }
         }
         if (oracleName != null && !oracleName.isEmpty()) {
-            return DeckCatalogService.buildScryfallNamedUrl(oracleName, false);
+            return DeckCatalogService.buildScryfallNamedUrl(oracleName, false, backFace);
         }
         return "https://cards.scryfall.io/back.png";
     }

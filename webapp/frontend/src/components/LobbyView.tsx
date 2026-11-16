@@ -1,7 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ChatEntry, RoomSlotInfo, RoomState } from '../types';
 import { DeckSelectorModal } from './DeckSelectorModal';
-import { startRoomMatch } from '../api';
+import {
+  startRoomMatch,
+  updateRoomFormatApi,
+  updateRoomSlotsCountApi,
+} from '../api';
 import {
   Bot,
   Check,
@@ -11,7 +15,9 @@ import {
   Lock,
   LogOut,
   MessageSquare,
+  Minus,
   Play,
+  Plus,
   Send,
   Shield,
   Sparkles,
@@ -44,7 +50,15 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   const [chatInput, setChatInput] = useState('');
   const [copiedId, setCopiedId] = useState(false);
   const [startingGame, setStartingGame] = useState(false);
+  const [updatingRoomCfg, setUpdatingRoomCfg] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const chatListRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (chatListRef.current) {
+      chatListRef.current.scrollTop = chatListRef.current.scrollHeight;
+    }
+  }, [chatMessages.length]);
 
   const handleCopyRoomId = () => {
     navigator.clipboard?.writeText(room.roomId);
@@ -82,12 +96,50 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
     });
   };
 
-  const handleChangeTeam = (slotIndex: number, team: number) => {
+  const handleChangeTeam = (slotIndex: number, uiTeam: number) => {
     onSendWs({
       type: 'CHANGE_TEAM',
       slotIndex,
-      team,
+      team: Math.max(0, Math.min(7, uiTeam - 1)),
     });
+  };
+
+  const handleToggleFormat = async () => {
+    if (!room.isHost || updatingRoomCfg) return;
+    setUpdatingRoomCfg(true);
+    setErrorMsg(null);
+    try {
+      const updated = await updateRoomFormatApi(
+        room.roomId,
+        sessionToken,
+        !room.isCommander
+      );
+      onRoomUpdated(updated);
+    } catch (e: any) {
+      setErrorMsg(e.message);
+    } finally {
+      setUpdatingRoomCfg(false);
+    }
+  };
+
+  const handleAdjustSlotsCount = async (delta: number) => {
+    if (!room.isHost || updatingRoomCfg) return;
+    const nextCount = Math.max(2, Math.min(8, room.maxPlayers + delta));
+    if (nextCount === room.maxPlayers) return;
+    setUpdatingRoomCfg(true);
+    setErrorMsg(null);
+    try {
+      const updated = await updateRoomSlotsCountApi(
+        room.roomId,
+        sessionToken,
+        delta > 0
+      );
+      onRoomUpdated(updated);
+    } catch (e: any) {
+      setErrorMsg(e.message);
+    } finally {
+      setUpdatingRoomCfg(false);
+    }
   };
 
   const handleStartMatch = async () => {
@@ -183,13 +235,46 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
       <div className="lobby-main-grid">
         {/* Seats Panel */}
         <section className="seats-section">
-          <div className="section-heading">
-            <h2>Posti al Tavolo ({room.maxPlayers} Slot)</h2>
-            <p className="muted-p">
-              Scegli il tuo posto, seleziona o costruisci il tuo mazzo e premi{' '}
-              <strong>Pronto</strong>. L&apos;Host può anche aggiungere Bot IA negli slot
-              liberi.
-            </p>
+          <div className="section-heading between-wrap">
+            <div>
+              <h2>Posti al Tavolo ({room.maxPlayers} Slot)</h2>
+              <p className="muted-p">
+                Scegli il tuo posto, seleziona o costruisci il tuo mazzo e premi{' '}
+                <strong>Pronto</strong>. L&apos;Host può anche aggiungere Bot IA negli slot
+                liberi.
+              </p>
+            </div>
+            {room.isHost && (
+              <div className="host-lobby-controls">
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  disabled={updatingRoomCfg}
+                  onClick={handleToggleFormat}
+                  title="Cambia formato tra Commander (100 carte, 40 PV) e Costruito (60 carte, 20 PV)"
+                >
+                  {room.isCommander ? 'Passa a Costruito' : 'Passa a Commander'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  disabled={updatingRoomCfg || room.maxPlayers <= 2}
+                  onClick={() => handleAdjustSlotsCount(-1)}
+                  title="Riduci numero posti al tavolo"
+                >
+                  <Minus size={13} /> Posto
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  disabled={updatingRoomCfg || room.maxPlayers >= 8}
+                  onClick={() => handleAdjustSlotsCount(1)}
+                  title="Aggiungi un posto al tavolo (fino a 8 giocatori)"
+                >
+                  <Plus size={13} /> Posto
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="seats-grid">
@@ -367,7 +452,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             <div className="chat-panel-header">
               <MessageSquare size={16} /> Chat della Stanza
             </div>
-            <div className="chat-messages-list">
+            <div className="chat-messages-list" ref={chatListRef}>
               {chatMessages.length === 0 ? (
                 <div className="chat-empty">Nessun messaggio ancora. Saluta il tavolo!</div>
               ) : (

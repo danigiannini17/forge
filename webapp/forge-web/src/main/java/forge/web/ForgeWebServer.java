@@ -68,6 +68,7 @@ public class ForgeWebServer {
         GuiBase.setInterface(new HeadlessWebGuiBase(assetsDir));
         System.out.println("[ForgeWebServer] Initializing FModel...");
         FModel.initialize(null, prefs -> {
+            prefs.setPref(FPref.PLAYER_NAME, "Planeswalker");
             prefs.setPref(FPref.LOAD_CARD_SCRIPTS_LAZILY, true);
             prefs.setPref(FPref.ENFORCE_DECK_LEGALITY, false);
             prefs.setPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS, true);
@@ -86,6 +87,7 @@ public class ForgeWebServer {
             try {
                 System.out.println("[ForgeWebServer] Background preloading all card scripts...");
                 FModel.getMagicDb().ensureAllCardsLoaded();
+                deckService.rebuildCardNameIndex();
                 System.out.println("[ForgeWebServer] All card scripts loaded ("
                         + FModel.getMagicDb().getCommonCards().getUniqueCards().size() + " unique cards).");
             } catch (Exception e) {
@@ -100,13 +102,38 @@ public class ForgeWebServer {
         server.start();
     }
 
+    private static File detectRepoRoot() {
+        try {
+            var cs = ForgeWebServer.class.getProtectionDomain().getCodeSource();
+            if (cs != null && cs.getLocation() != null) {
+                File loc = new File(cs.getLocation().toURI()).getCanonicalFile();
+                // Typical path: <repo>/webapp/forge-web/target/classes
+                File cursor = loc.isFile() ? loc.getParentFile() : loc;
+                for (int i = 0; i < 6 && cursor != null; i++) {
+                    if (new File(cursor, "forge-gui/res/cardsfolder").isDirectory()) {
+                        return cursor;
+                    }
+                    cursor = cursor.getParentFile();
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
     private static String resolveForgeGuiDir() {
         String env = System.getenv("FORGE_ASSETS_DIR");
         if (env != null && new File(env, "res").isDirectory()) {
             return new File(env).getAbsolutePath() + "/";
         }
+        File repoRoot = detectRepoRoot();
+        if (repoRoot != null) {
+            File guiDir = new File(repoRoot, "forge-gui");
+            if (new File(guiDir, "res/cardsfolder").isDirectory()) {
+                return guiDir.getAbsolutePath() + "/";
+            }
+        }
         String[] candidates = {
-                "/home/antigravity/danigiannini17/forge/forge-gui",
                 "../../forge-gui",
                 "../forge-gui",
                 "./forge-gui"
@@ -121,16 +148,29 @@ public class ForgeWebServer {
     }
 
     private static File resolveFrontendDistDir() {
+        String env = System.getenv("FRONTEND_DIST_DIR");
+        if (env != null && new File(env).isDirectory()) {
+            return new File(env).getAbsoluteFile();
+        }
+        File repoRoot = detectRepoRoot();
+        if (repoRoot != null) {
+            File dist = new File(repoRoot, "webapp/frontend/dist");
+            if (dist.isDirectory()) {
+                return dist.getAbsoluteFile();
+            }
+        }
         String[] candidates = {
-                "/home/antigravity/danigiannini17/forge/webapp/frontend/dist",
                 "../frontend/dist",
+                "./frontend/dist",
                 "./webapp/frontend/dist"
         };
         for (String c : candidates) {
             File f = new File(c);
-            if (f.isDirectory()) return f;
+            if (f.isDirectory()) return f.getAbsoluteFile();
         }
-        return new File("/home/antigravity/danigiannini17/forge/webapp/frontend/dist");
+        return repoRoot != null
+                ? new File(repoRoot, "webapp/frontend/dist")
+                : new File("../frontend/dist");
     }
 
     public void start() throws InterruptedException {
@@ -356,7 +396,7 @@ public class ForgeWebServer {
                 if (parts.length == 1 && method == HttpMethod.GET) {
                     JsonObject res = new JsonObject();
                     res.add("room", room.toRoomJson(reqToken));
-                    if (room.getLobby().isMatchActive() || room.getLobby().getHostedMatch() != null) {
+                    if (room.getLobby().isMatchActive()) {
                         res.add("game", room.buildGameStateEnvelope(reqToken).getAsJsonObject("game"));
                     }
                     sendJson(ctx, HttpResponseStatus.OK, res);
@@ -639,9 +679,11 @@ public class ForgeWebServer {
             try {
                 String cleanPath = requestPath.equals("/") ? "/index.html" : requestPath;
                 File target = new File(staticDistDir, cleanPath).getCanonicalFile();
+                boolean isHashedAsset = cleanPath.startsWith("/assets/");
                 if (!target.getPath().startsWith(staticDistDir.getCanonicalPath()) || !target.isFile()) {
                     // SPA fallback to index.html
                     target = new File(staticDistDir, "index.html");
+                    isHashedAsset = false;
                 }
                 if (!target.isFile()) {
                     sendJsonError(ctx, HttpResponseStatus.NOT_FOUND, "File non trovato");
@@ -653,6 +695,10 @@ public class ForgeWebServer {
                 res.headers().set(HttpHeaderNames.CONTENT_TYPE, guessMimeType(target.getName()));
                 res.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, bytes.length);
                 addSecurityAndCorsHeaders(res, false);
+                res.headers().set(
+                        HttpHeaderNames.CACHE_CONTROL,
+                        isHashedAsset ? "public, max-age=31536000, immutable" : "no-cache"
+                );
                 ctx.writeAndFlush(res);
             } catch (Exception e) {
                 sendJsonError(ctx, HttpResponseStatus.INTERNAL_SERVER_ERROR, "Errore caricamento risorsa.");
@@ -679,6 +725,10 @@ public class ForgeWebServer {
         if (lower.endsWith(".css")) return "text/css; charset=UTF-8";
         if (lower.endsWith(".svg")) return "image/svg+xml";
         if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".webp")) return "image/webp";
+        if (lower.endsWith(".ico")) return "image/x-icon";
+        if (lower.endsWith(".woff2")) return "font/woff2";
+        if (lower.endsWith(".woff")) return "font/woff";
         if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
         if (lower.endsWith(".json")) return "application/json; charset=UTF-8";
         return "application/octet-stream";

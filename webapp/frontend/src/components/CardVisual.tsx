@@ -42,7 +42,7 @@ const KEYWORD_BADGES: { match: string; icon: string; label: string }[] = [
   { match: 'menace', icon: '👹', label: 'Minacciare (Menace)' },
 ];
 
-export const CardVisual: React.FC<CardVisualProps> = ({
+const CardVisualInner: React.FC<CardVisualProps> = ({
   card,
   size = 'md',
   onClick,
@@ -403,7 +403,19 @@ export const CardVisual: React.FC<CardVisualProps> = ({
             ❖ {card.loyalty}
           </div>
         )}
+        {!card.hidden &&
+          !card.isCreature &&
+          !card.isPlaneswalker &&
+          card.defense &&
+          card.defense !== '0' && (
+            <div className="mtg-card-defense" title="Difesa Battaglia">
+              🛡️ {card.defense}
+            </div>
+          )}
       </div>
     </div>
   );
 };
+
+export const CardVisual = React.memo(CardVisualInner);
+
