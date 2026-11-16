@@ -199,11 +199,15 @@ public class ForgeWebServer {
                 String nickname = getParam(decoder, "nickname", "Planeswalker");
                 String password = getParam(decoder, "password", "");
 
-                ctx.channel().attr(ATTR_ROOM_ID).set(RoomManager.normalizeRoomId(roomId));
-                ctx.channel().attr(ATTR_SESSION_TOKEN).set(sessionToken);
+                if (!roomId.isEmpty()) {
+                    ctx.channel().attr(ATTR_ROOM_ID).set(RoomManager.normalizeRoomId(roomId));
+                }
+                if (!sessionToken.isEmpty()) {
+                    ctx.channel().attr(ATTR_SESSION_TOKEN).set(sessionToken);
+                }
 
                 WebSocketServerHandshakerFactory wsFactory = new WebSocketServerHandshakerFactory(
-                        getWebSocketLocation(req), null, true, 4 * 1024 * 1024
+                        getWebSocketLocation(req), null, true, 1024 * 1024
                 );
                 handshaker = wsFactory.newHandshaker(req);
                 if (handshaker == null) {
@@ -213,7 +217,15 @@ public class ForgeWebServer {
                         if (future.isSuccess() && !roomId.isEmpty() && !sessionToken.isEmpty()) {
                             GameRoom room = roomManager.getRoom(roomId);
                             if (room != null) {
-                                room.joinOrReconnect(sessionToken, nickname, password);
+                                int slotRes = room.joinOrReconnect(sessionToken, nickname, password);
+                                if (slotRes == -2) {
+                                    JsonObject err = new JsonObject();
+                                    err.addProperty("type", "AUTH_ERROR");
+                                    err.addProperty("message", "Password della stanza errata o sessione non valida.");
+                                    ctx.channel().writeAndFlush(new TextWebSocketFrame(GSON.toJson(err)))
+                                            .addListener(ChannelFutureListener.CLOSE);
+                                    return;
+                                }
                                 room.registerWebSocket(sessionToken, ctx.channel());
                             }
                         }
@@ -228,8 +240,8 @@ public class ForgeWebServer {
                 } catch (IllegalArgumentException e) {
                     sendJsonError(ctx, HttpResponseStatus.BAD_REQUEST, e.getMessage());
                 } catch (Exception e) {
-                    e.printStackTrace();
-                    sendJsonError(ctx, HttpResponseStatus.INTERNAL_SERVER_ERROR, "Errore interno: " + e.getMessage());
+                    System.err.println("[ForgeWebServer] Internal API error on " + path + ": " + e.getMessage());
+                    sendJsonError(ctx, HttpResponseStatus.INTERNAL_SERVER_ERROR, "Errore interno del server.");
                 }
                 return;
             }
@@ -242,6 +254,7 @@ public class ForgeWebServer {
                                       QueryStringDecoder decoder, String path) {
             HttpMethod method = req.method();
             JsonObject body = parseJsonBody(req);
+            String reqToken = extractSessionToken(req, decoder, body);
 
             if (path.equals("/api/status") && method == HttpMethod.GET) {
                 JsonObject res = new JsonObject();
@@ -253,9 +266,8 @@ public class ForgeWebServer {
             }
 
             if (path.equals("/api/rooms") && method == HttpMethod.GET) {
-                String sessionToken = getParam(decoder, "sessionToken", "");
                 JsonObject res = new JsonObject();
-                res.add("rooms", roomManager.listRoomsJson(sessionToken));
+                res.add("rooms", roomManager.listRoomsJson(reqToken));
                 sendJson(ctx, HttpResponseStatus.OK, res);
                 return;
             }
@@ -264,7 +276,7 @@ public class ForgeWebServer {
                 String roomId = getStr(body, "roomId", "");
                 String roomName = getStr(body, "roomName", "");
                 String password = getStr(body, "password", "");
-                String sessionToken = getStr(body, "sessionToken", UUID.randomUUID().toString());
+                String sessionToken = !reqToken.isEmpty() ? reqToken : UUID.randomUUID().toString();
                 String nickname = getStr(body, "nickname", "Planeswalker");
                 boolean isCommander = true;
                 if (body.has("isCommander")) {
@@ -286,7 +298,7 @@ public class ForgeWebServer {
             if (path.equals("/api/rooms/join") && method == HttpMethod.POST) {
                 String roomId = getStr(body, "roomId", "");
                 String password = getStr(body, "password", "");
-                String sessionToken = getStr(body, "sessionToken", "");
+                String sessionToken = reqToken;
                 String nickname = getStr(body, "nickname", "Planeswalker");
 
                 GameRoom room = roomManager.getRoom(roomId);
@@ -319,7 +331,7 @@ public class ForgeWebServer {
 
                 if (parts.length == 2 && "join".equals(parts[1]) && method == HttpMethod.POST) {
                     String password = getStr(body, "password", "");
-                    String sessionToken = getStr(body, "sessionToken", "");
+                    String sessionToken = reqToken;
                     String nickname = getStr(body, "nickname", "Planeswalker");
                     int slotIdx = room.joinOrReconnect(sessionToken, nickname, password);
                     if (slotIdx == -2) {
@@ -335,58 +347,72 @@ public class ForgeWebServer {
                     return;
                 }
 
+                // All other /api/rooms/{roomId}/* endpoints require room authorization
+                if (!room.isAuthorized(reqToken)) {
+                    sendJsonError(ctx, HttpResponseStatus.FORBIDDEN, "Non sei autorizzato ad accedere a questa stanza.");
+                    return;
+                }
+
                 if (parts.length == 1 && method == HttpMethod.GET) {
-                    String sessionToken = getParam(decoder, "sessionToken", "");
                     JsonObject res = new JsonObject();
-                    res.add("room", room.toRoomJson(sessionToken));
+                    res.add("room", room.toRoomJson(reqToken));
                     if (room.getLobby().isMatchActive() || room.getLobby().getHostedMatch() != null) {
-                        res.add("game", room.buildGameStateEnvelope(sessionToken).getAsJsonObject("game"));
+                        res.add("game", room.buildGameStateEnvelope(reqToken).getAsJsonObject("game"));
                     }
                     sendJson(ctx, HttpResponseStatus.OK, res);
                     return;
                 }
 
                 if (parts.length == 2 && "slot".equals(parts[1]) && method == HttpMethod.POST) {
-                    String sessionToken = getStr(body, "sessionToken", "");
                     int slotIndex = body.has("slotIndex") ? body.get("slotIndex").getAsInt() : 0;
                     String slotType = body.has("slotType") && !body.get("slotType").isJsonNull() ? body.get("slotType").getAsString() : null;
                     Integer team = body.has("team") && !body.get("team").isJsonNull() ? body.get("team").getAsInt() : null;
                     Boolean ready = body.has("ready") && !body.get("ready").isJsonNull() ? body.get("ready").getAsBoolean() : null;
 
-                    room.configureSlot(sessionToken, slotIndex, slotType, team, ready);
+                    if (!room.configureSlot(reqToken, slotIndex, slotType, team, ready)) {
+                        sendJsonError(ctx, HttpResponseStatus.FORBIDDEN, "Operazione non consentita su questo posto.");
+                        return;
+                    }
                     JsonObject res = new JsonObject();
                     res.addProperty("success", true);
-                    res.add("room", room.toRoomJson(sessionToken));
+                    res.add("room", room.toRoomJson(reqToken));
                     sendJson(ctx, HttpResponseStatus.OK, res);
                     return;
                 }
 
                 if (parts.length == 2 && "slots-count".equals(parts[1]) && method == HttpMethod.POST) {
-                    String sessionToken = getStr(body, "sessionToken", "");
                     boolean add = !body.has("add") || body.get("add").getAsBoolean();
-                    room.addOrRemoveSlot(add);
+                    if (!room.addOrRemoveSlot(reqToken, add)) {
+                        sendJsonError(ctx, HttpResponseStatus.FORBIDDEN, "Solo l'Host può modificare il numero di posti.");
+                        return;
+                    }
                     JsonObject res = new JsonObject();
                     res.addProperty("success", true);
-                    res.add("room", room.toRoomJson(sessionToken));
+                    res.add("room", room.toRoomJson(reqToken));
                     sendJson(ctx, HttpResponseStatus.OK, res);
                     return;
                 }
 
                 if (parts.length == 2 && "format".equals(parts[1]) && method == HttpMethod.POST) {
-                    String sessionToken = getStr(body, "sessionToken", "");
                     boolean isCommander = !body.has("isCommander") || body.get("isCommander").getAsBoolean();
-                    room.setFormat(sessionToken, isCommander);
+                    if (!room.setFormat(reqToken, isCommander)) {
+                        sendJsonError(ctx, HttpResponseStatus.FORBIDDEN, "Solo l'Host può cambiare il formato della stanza.");
+                        return;
+                    }
                     JsonObject res = new JsonObject();
                     res.addProperty("success", true);
-                    res.add("room", room.toRoomJson(sessionToken));
+                    res.add("room", room.toRoomJson(reqToken));
                     sendJson(ctx, HttpResponseStatus.OK, res);
                     return;
                 }
 
                 if (parts.length == 2 && "deck".equals(parts[1]) && method == HttpMethod.POST) {
-                    String sessionToken = getStr(body, "sessionToken", "");
-                    Integer mySlot = room.getSlotForSession(sessionToken);
-                    int slotIndex = body.has("slotIndex") ? body.get("slotIndex").getAsInt() : (mySlot != null ? mySlot : 0);
+                    Integer mySlot = room.getSlotForSession(reqToken);
+                    int slotIndex = body.has("slotIndex") ? body.get("slotIndex").getAsInt() : (mySlot != null ? mySlot : -1);
+                    if (!room.canModifySlot(reqToken, slotIndex)) {
+                        sendJsonError(ctx, HttpResponseStatus.FORBIDDEN, "Non puoi modificare il mazzo di un altro giocatore.");
+                        return;
+                    }
                     String mode = getStr(body, "mode", "CATALOG").toUpperCase(Locale.ROOT);
 
                     Deck chosenDeck = null;
@@ -397,7 +423,7 @@ public class ForgeWebServer {
                             String deckId = getStr(body, "deckId", "");
                             chosenDeck = deckService.loadCatalogDeck(deckId);
                             if (chosenDeck == null) {
-                                sendJsonError(ctx, HttpResponseStatus.BAD_REQUEST, "Mazzo del catalogo non trovato: " + deckId);
+                                sendJsonError(ctx, HttpResponseStatus.BAD_REQUEST, "Mazzo del catalogo non trovato.");
                                 return;
                             }
                         }
@@ -433,12 +459,15 @@ public class ForgeWebServer {
                         return;
                     }
 
-                    room.setSlotDeck(slotIndex, chosenDeck);
+                    if (!room.setSlotDeck(reqToken, slotIndex, chosenDeck)) {
+                        sendJsonError(ctx, HttpResponseStatus.FORBIDDEN, "Impossibile assegnare il mazzo a questo posto.");
+                        return;
+                    }
                     JsonObject serializedDeck = DeckCatalogService.serializeDeck(chosenDeck);
                     JsonObject res = new JsonObject();
                     res.addProperty("success", true);
                     res.addProperty("ok", true);
-                    res.add("room", room.toRoomJson(sessionToken));
+                    res.add("room", room.toRoomJson(reqToken));
                     res.add("deck", serializedDeck);
                     res.add("deckSummary", serializedDeck);
                     JsonArray warnArr = new JsonArray();
@@ -449,7 +478,17 @@ public class ForgeWebServer {
                 }
 
                 if (parts.length == 4 && "slot".equals(parts[1]) && "deck".equals(parts[3]) && method == HttpMethod.GET) {
-                    int slotIdx = Integer.parseInt(parts[2]);
+                    int slotIdx;
+                    try {
+                        slotIdx = Integer.parseInt(parts[2]);
+                    } catch (NumberFormatException e) {
+                        sendJsonError(ctx, HttpResponseStatus.BAD_REQUEST, "Indice posto non valido.");
+                        return;
+                    }
+                    if (!room.canInspectSlotDeck(reqToken, slotIdx)) {
+                        sendJsonError(ctx, HttpResponseStatus.FORBIDDEN, "Non puoi ispezionare la lista del mazzo di un avversario.");
+                        return;
+                    }
                     var slot = room.getLobby().getSlot(slotIdx);
                     Deck d = slot != null ? slot.getDeck() : null;
                     JsonObject res = new JsonObject();
@@ -459,7 +498,10 @@ public class ForgeWebServer {
                 }
 
                 if (parts.length == 2 && "start".equals(parts[1]) && method == HttpMethod.POST) {
-                    String sessionToken = getStr(body, "sessionToken", "");
+                    if (!room.isHost(reqToken)) {
+                        sendJsonError(ctx, HttpResponseStatus.FORBIDDEN, "Solo l'Host della stanza può avviare la partita.");
+                        return;
+                    }
                     String error = room.startMatch();
                     if (error != null) {
                         sendJsonError(ctx, HttpResponseStatus.BAD_REQUEST, error);
@@ -468,14 +510,13 @@ public class ForgeWebServer {
                     JsonObject res = new JsonObject();
                     res.addProperty("success", true);
                     res.addProperty("ok", true);
-                    res.add("room", room.toRoomJson(sessionToken));
+                    res.add("room", room.toRoomJson(reqToken));
                     sendJson(ctx, HttpResponseStatus.OK, res);
                     return;
                 }
 
                 if (parts.length == 2 && "leave".equals(parts[1]) && method == HttpMethod.POST) {
-                    String sessionToken = getStr(body, "sessionToken", "");
-                    room.leaveRoom(sessionToken);
+                    room.leaveRoom(reqToken);
                     JsonObject res = new JsonObject();
                     res.addProperty("success", true);
                     sendJson(ctx, HttpResponseStatus.OK, res);
@@ -486,7 +527,7 @@ public class ForgeWebServer {
             if (path.equals("/api/decks/catalog") && method == HttpMethod.GET) {
                 String category = getParam(decoder, "category", "ALL");
                 String q = getParam(decoder, "q", "");
-                int limit = getIntParam(decoder, "limit", 500);
+                int limit = Math.max(1, Math.min(600, getIntParam(decoder, "limit", 500)));
                 sendJson(ctx, HttpResponseStatus.OK, deckService.getCatalogJson(category, q, limit));
                 return;
             }
@@ -495,7 +536,7 @@ public class ForgeWebServer {
                 String id = getParam(decoder, "id", "");
                 Deck d = deckService.loadCatalogDeck(id);
                 if (d == null) {
-                    sendJsonError(ctx, HttpResponseStatus.NOT_FOUND, "Mazzo non trovato: " + id);
+                    sendJsonError(ctx, HttpResponseStatus.NOT_FOUND, "Mazzo non trovato.");
                     return;
                 }
                 JsonObject res = new JsonObject();
@@ -509,7 +550,7 @@ public class ForgeWebServer {
                 String colors = getParam(decoder, "colors", "");
                 String type = getParam(decoder, "type", "");
                 boolean commanderOnly = Boolean.parseBoolean(getParam(decoder, "commanderOnly", "false"));
-                int limit = getIntParam(decoder, "limit", 48);
+                int limit = Math.max(1, Math.min(100, getIntParam(decoder, "limit", 48)));
 
                 JsonObject res = new JsonObject();
                 res.add("cards", deckService.searchCards(q, colors, type, commanderOnly, limit));
@@ -517,7 +558,7 @@ public class ForgeWebServer {
                 return;
             }
 
-            sendJsonError(ctx, HttpResponseStatus.NOT_FOUND, "Endpoint API non trovato: " + path);
+            sendJsonError(ctx, HttpResponseStatus.NOT_FOUND, "Endpoint API non trovato.");
         }
 
         private void handleWebSocketFrame(ChannelHandlerContext ctx, WebSocketFrame frame) {
@@ -538,34 +579,49 @@ public class ForgeWebServer {
             }
 
             try {
-                JsonObject msg = JsonParser.parseString(textFrame.text()).getAsJsonObject();
+                String rawText = textFrame.text();
+                if (rawText == null || rawText.length() > 65536) {
+                    return;
+                }
+                JsonObject msg = JsonParser.parseString(rawText).getAsJsonObject();
                 String type = getStr(msg, "type", "");
                 if ("AUTH".equals(type)) {
                     String roomId = RoomManager.normalizeRoomId(getStr(msg, "roomId", ""));
                     String sessionToken = getStr(msg, "sessionToken", "");
                     String nickname = getStr(msg, "nickname", "Planeswalker");
                     String password = getStr(msg, "password", "");
+                    GameRoom room = roomManager.getRoom(roomId);
+                    if (room == null || sessionToken.isEmpty()) {
+                        JsonObject err = new JsonObject();
+                        err.addProperty("type", "AUTH_ERROR");
+                        err.addProperty("message", "Stanza non trovata o sessione non valida.");
+                        ctx.channel().writeAndFlush(new TextWebSocketFrame(GSON.toJson(err)))
+                                .addListener(ChannelFutureListener.CLOSE);
+                        return;
+                    }
+                    int slotRes = room.joinOrReconnect(sessionToken, nickname, password);
+                    if (slotRes == -2) {
+                        JsonObject err = new JsonObject();
+                        err.addProperty("type", "AUTH_ERROR");
+                        err.addProperty("message", "Password della stanza errata.");
+                        ctx.channel().writeAndFlush(new TextWebSocketFrame(GSON.toJson(err)))
+                                .addListener(ChannelFutureListener.CLOSE);
+                        return;
+                    }
                     ctx.channel().attr(ATTR_ROOM_ID).set(roomId);
                     ctx.channel().attr(ATTR_SESSION_TOKEN).set(sessionToken);
-                    GameRoom room = roomManager.getRoom(roomId);
-                    if (room != null && !sessionToken.isEmpty()) {
-                        room.joinOrReconnect(sessionToken, nickname, password);
-                        room.registerWebSocket(sessionToken, ctx.channel());
-                    }
+                    room.registerWebSocket(sessionToken, ctx.channel());
                     return;
                 }
 
                 String roomId = ctx.channel().attr(ATTR_ROOM_ID).get();
                 String sessionToken = ctx.channel().attr(ATTR_SESSION_TOKEN).get();
-                if (roomId == null || roomId.isEmpty()) {
-                    roomId = RoomManager.normalizeRoomId(getStr(msg, "roomId", ""));
-                }
-                if (sessionToken == null || sessionToken.isEmpty()) {
-                    sessionToken = getStr(msg, "sessionToken", "");
+                if (roomId == null || roomId.isEmpty() || sessionToken == null || sessionToken.isEmpty()) {
+                    return;
                 }
 
                 GameRoom room = roomManager.getRoom(roomId);
-                if (room != null && sessionToken != null) {
+                if (room != null) {
                     room.handleWebSocketMessage(sessionToken, msg);
                 }
             } catch (Exception e) {
@@ -576,7 +632,7 @@ public class ForgeWebServer {
         private void serveStaticFile(ChannelHandlerContext ctx, String requestPath) {
             if (staticDistDir == null || !staticDistDir.isDirectory()) {
                 JsonObject info = new JsonObject();
-                info.addProperty("message", "Forge Web Backend attivo. Usa il frontend React o compila webapp/frontend/dist.");
+                info.addProperty("message", "Lozzander Online Backend attivo.");
                 sendJson(ctx, HttpResponseStatus.OK, info);
                 return;
             }
@@ -596,12 +652,24 @@ public class ForgeWebServer {
                 FullHttpResponse res = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK, content);
                 res.headers().set(HttpHeaderNames.CONTENT_TYPE, guessMimeType(target.getName()));
                 res.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, bytes.length);
-                addCorsHeaders(res);
+                addSecurityAndCorsHeaders(res, false);
                 ctx.writeAndFlush(res);
             } catch (Exception e) {
-                sendJsonError(ctx, HttpResponseStatus.INTERNAL_SERVER_ERROR, e.getMessage());
+                sendJsonError(ctx, HttpResponseStatus.INTERNAL_SERVER_ERROR, "Errore caricamento risorsa.");
             }
         }
+    }
+
+    private static String extractSessionToken(FullHttpRequest req, QueryStringDecoder decoder, JsonObject body) {
+        String headerToken = req.headers().get("X-Session-Token");
+        if (headerToken != null && !headerToken.isBlank()) {
+            return headerToken.trim();
+        }
+        String bodyToken = getStr(body, "sessionToken", "");
+        if (!bodyToken.isBlank()) {
+            return bodyToken.trim();
+        }
+        return getParam(decoder, "sessionToken", "").trim();
     }
 
     private static String guessMimeType(String name) {
@@ -617,6 +685,9 @@ public class ForgeWebServer {
     }
 
     private static JsonObject parseJsonBody(FullHttpRequest req) {
+        if (req.content().readableBytes() > 512 * 1024) {
+            throw new IllegalArgumentException("Payload JSON troppo grande.");
+        }
         String content = req.content().toString(CharsetUtil.UTF_8);
         if (content == null || content.isBlank()) {
             return new JsonObject();
@@ -653,20 +724,31 @@ public class ForgeWebServer {
         FullHttpResponse res = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status, buf);
         res.headers().set(HttpHeaderNames.CONTENT_TYPE, "application/json; charset=UTF-8");
         res.headers().setInt(HttpHeaderNames.CONTENT_LENGTH, bytes.length);
-        addCorsHeaders(res);
+        addSecurityAndCorsHeaders(res, true);
         ctx.writeAndFlush(res);
     }
 
     private static void sendJsonError(ChannelHandlerContext ctx, HttpResponseStatus status, String errorMsg) {
         JsonObject err = new JsonObject();
-        err.addProperty("error", errorMsg);
+        err.addProperty("error", errorMsg != null ? errorMsg : "Errore richiesta.");
         sendJson(ctx, status, err);
     }
 
     private static void addCorsHeaders(HttpResponse res) {
+        addSecurityAndCorsHeaders(res, true);
+    }
+
+    private static void addSecurityAndCorsHeaders(HttpResponse res, boolean isApi) {
         res.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, "*");
         res.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_METHODS, "GET, POST, PUT, DELETE, OPTIONS");
         res.headers().set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type, Authorization, X-Session-Token");
+        res.headers().set("X-Content-Type-Options", "nosniff");
+        res.headers().set("X-Frame-Options", "DENY");
+        res.headers().set("Referrer-Policy", "no-referrer");
+        res.headers().set("X-XSS-Protection", "1; mode=block");
+        if (isApi) {
+            res.headers().set(HttpHeaderNames.CACHE_CONTROL, "no-store, no-cache, must-revalidate");
+        }
     }
 
     private static String getWebSocketLocation(FullHttpRequest req) {

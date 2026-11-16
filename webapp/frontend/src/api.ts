@@ -19,10 +19,17 @@ const STORAGE_NICKNAME_KEY = 'forge_web_nickname';
 
 export function getOrCreateSessionToken(): string {
   let token = localStorage.getItem(STORAGE_TOKEN_KEY);
-  if (!token || token.length < 8) {
-    const rand = Math.random().toString(36).substring(2, 12);
-    const ts = Date.now().toString(36);
-    token = `pw_${ts}_${rand}`;
+  if (!token || token.length < 32) {
+    const bytes = new Uint8Array(24);
+    if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
+      window.crypto.getRandomValues(bytes);
+    } else {
+      for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = Math.floor(Math.random() * 256);
+      }
+    }
+    const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    token = `pw_${hex}`;
     localStorage.setItem(STORAGE_TOKEN_KEY, token);
   }
   return token;
@@ -475,10 +482,12 @@ function normalizeDeckSummary(raw: any): DeckSummary {
 }
 
 async function requestJson<T>(url: string, options?: RequestInit): Promise<T> {
+  const token = getOrCreateSessionToken();
   const res = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      'X-Session-Token': token,
       ...(options?.headers || {}),
     },
   });
@@ -498,9 +507,9 @@ export async function fetchServerStatus(): Promise<{
 }
 
 export async function fetchRooms(sessionToken: string): Promise<RoomSummary[]> {
-  const data = await requestJson<{ rooms: any[] }>(
-    `/api/rooms?sessionToken=${encodeURIComponent(sessionToken)}`
-  );
+  const data = await requestJson<{ rooms: any[] }>('/api/rooms', {
+    headers: { 'X-Session-Token': sessionToken },
+  });
   return (data.rooms || []).map((r) => ({
     roomId: r.roomId,
     roomName: r.roomName,

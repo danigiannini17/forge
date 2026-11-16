@@ -345,23 +345,31 @@ public class DeckCatalogService {
      * Parses a user-submitted decklist text (MTG Arena, MTGO, Moxfield, or .dck format).
      */
     public Deck parseDeckFromText(String deckName, String decklistText, String explicitCommander, boolean isCommanderFormat, List<String> warningsOut) {
-        String finalName = (deckName != null && !deckName.isBlank()) ? deckName.trim() : "Custom Deck";
+        String finalName = GameRoom.sanitizeText(deckName, 60, "Custom Deck");
         Deck deck = new Deck(finalName);
         if (decklistText == null || decklistText.isBlank()) {
             warningsOut.add("Lista mazzo vuota.");
             return deck;
         }
+        String safeText = decklistText.length() > 50_000 ? decklistText.substring(0, 50_000) : decklistText;
 
         DeckSection currentSection = DeckSection.Main;
-        String[] lines = decklistText.split("\\r?\\n");
-        for (String rawLine : lines) {
-            String line = rawLine.trim();
+        String[] lines = safeText.split("\\r?\\n");
+        int maxLines = Math.min(lines.length, 400);
+        int totalCardsAdded = 0;
+
+        for (int idx = 0; idx < maxLines; idx++) {
+            if (totalCardsAdded >= 250) {
+                warningsOut.add("Limite massimo di 250 carte per mazzo raggiunto.");
+                break;
+            }
+            String line = lines[idx].trim();
             if (line.isEmpty() || line.startsWith("#") || line.startsWith("//")) {
                 continue;
             }
             if (line.startsWith("Name=")) {
                 if (deckName == null || deckName.isBlank()) {
-                    deck.setName(line.substring(5).trim());
+                    deck.setName(GameRoom.sanitizeText(line.substring(5), 60, "Custom Deck"));
                 }
                 continue;
             }
@@ -388,7 +396,11 @@ public class DeckCatalogService {
             String setCode = null;
             Matcher m = LINE_PATTERN.matcher(line);
             if (m.matches()) {
-                count = Integer.parseInt(m.group(1));
+                try {
+                    count = Integer.parseInt(m.group(1));
+                } catch (NumberFormatException e) {
+                    count = 1;
+                }
                 cardName = m.group(2).trim();
                 if (m.group(3) != null) {
                     setCode = m.group(3).trim();
@@ -399,10 +411,15 @@ public class DeckCatalogService {
                 // Try simple "1 Card Name"
                 Matcher simple = Pattern.compile("^(\\d+)\\s*x?\\s+(.+)$").matcher(line);
                 if (simple.matches()) {
-                    count = Integer.parseInt(simple.group(1));
+                    try {
+                        count = Integer.parseInt(simple.group(1));
+                    } catch (NumberFormatException e) {
+                        count = 1;
+                    }
                     cardName = simple.group(2).trim();
                 }
             }
+            count = Math.max(1, Math.min(99, count));
 
             // Strip any trailing tags like *CMDR* or [Commander]
             boolean markedCmdr = cardName.contains("*CMDR*") || cardName.toLowerCase(Locale.ROOT).endsWith("[commander]");
@@ -414,7 +431,11 @@ public class DeckCatalogService {
                 continue;
             }
             DeckSection targetSection = markedCmdr ? DeckSection.Commander : currentSection;
-            deck.getOrCreate(targetSection).add(pc, count);
+            int allowed = Math.min(count, 250 - totalCardsAdded);
+            if (allowed > 0) {
+                deck.getOrCreate(targetSection).add(pc, allowed);
+                totalCardsAdded += allowed;
+            }
         }
 
         if (explicitCommander != null && !explicitCommander.isBlank()) {
@@ -449,10 +470,10 @@ public class DeckCatalogService {
      * Builds a Deck from a structured JSON object sent by the Deckbuilder UI.
      */
     public Deck buildDeckFromJson(JsonObject payload, List<String> warningsOut) {
-        String name = payload.has("name") && !payload.get("name").isJsonNull()
-                ? payload.get("name").getAsString().trim()
+        String rawName = payload.has("name") && !payload.get("name").isJsonNull()
+                ? payload.get("name").getAsString()
                 : "Custom Deck";
-        if (name.isEmpty()) name = "Custom Deck";
+        String name = GameRoom.sanitizeText(rawName, 60, "Custom Deck");
         Deck deck = new Deck(name);
 
         addSectionFromJson(deck, DeckSection.Commander, payload.getAsJsonArray("commander"), warningsOut);
@@ -463,16 +484,22 @@ public class DeckCatalogService {
 
     private void addSectionFromJson(Deck deck, DeckSection section, JsonArray arr, List<String> warningsOut) {
         if (arr == null) return;
-        for (JsonElement el : arr) {
+        int totalInSection = 0;
+        int maxEntries = Math.min(arr.size(), 250);
+        for (int i = 0; i < maxEntries; i++) {
+            if (totalInSection >= 250) break;
+            JsonElement el = arr.get(i);
             if (!el.isJsonObject()) continue;
             JsonObject item = el.getAsJsonObject();
             String cardName = item.has("name") ? item.get("name").getAsString() : "";
             int count = item.has("count") ? item.get("count").getAsInt() : 1;
             String setCode = item.has("setCode") && !item.get("setCode").isJsonNull() ? item.get("setCode").getAsString() : null;
             if (cardName.isEmpty() || count <= 0) continue;
+            int clamped = Math.min(Math.max(1, count), Math.min(99, 250 - totalInSection));
             PaperCard pc = resolvePaperCard(cardName, setCode);
             if (pc != null) {
-                deck.getOrCreate(section).add(pc, count);
+                deck.getOrCreate(section).add(pc, clamped);
+                totalInSection += clamped;
             } else {
                 warningsOut.add("Carta non trovata: " + cardName);
             }

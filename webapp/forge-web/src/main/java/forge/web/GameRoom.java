@@ -16,6 +16,8 @@ import forge.util.NameGenerator;
 import io.netty.channel.Channel;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
@@ -51,6 +53,8 @@ public class GameRoom {
     private final Map<Integer, String> slotToToken = new ConcurrentHashMap<>();
     // Maps sessionToken -> latest nickname
     private final Map<String, String> tokenToNickname = new ConcurrentHashMap<>();
+    // Set of sessionTokens that have authenticated with the room password
+    private final Set<String> authorizedTokens = ConcurrentHashMap.newKeySet();
     // Maps slotIndex -> active WebGuiGame for that seat
     private final Map<Integer, WebGuiGame> slotToGui = new ConcurrentHashMap<>();
     // Maps sessionToken -> connected WebSocket channels
@@ -59,12 +63,22 @@ public class GameRoom {
     private final List<ChatMessage> chatHistory = Collections.synchronizedList(new ArrayList<>());
     private final AtomicBoolean broadcastScheduled = new AtomicBoolean(false);
 
+    public static String sanitizeText(String raw, int maxLen, String defaultVal) {
+        if (raw == null) return defaultVal;
+        String cleaned = raw.replaceAll("[\\p{Cntrl}&&[^\r\n\t]]", "").trim();
+        if (cleaned.isEmpty()) return defaultVal;
+        return cleaned.length() > maxLen ? cleaned.substring(0, maxLen) : cleaned;
+    }
+
     public GameRoom(String roomId, String roomName, String password, String hostSessionToken,
                     String hostNickname, boolean commanderFormat, int maxPlayers, DeckCatalogService deckService) {
         this.roomId = roomId;
-        this.roomName = (roomName != null && !roomName.isBlank()) ? roomName.trim() : ("Stanza " + roomId);
+        this.roomName = sanitizeText(roomName, 50, "Stanza " + roomId);
         this.password = password != null ? password.trim() : "";
         this.hostSessionToken = hostSessionToken;
+        if (hostSessionToken != null && !hostSessionToken.isBlank()) {
+            this.authorizedTokens.add(hostSessionToken);
+        }
         this.commanderFormat = commanderFormat;
         this.createdAt = Instant.now().toEpochMilli();
         this.deckService = deckService;
@@ -78,8 +92,9 @@ public class GameRoom {
         }
 
         // Seat the creator in Slot 0
-        joinOrReconnect(hostSessionToken, hostNickname, this.password);
-        addSystemChat("Stanza \"" + this.roomName + "\" (" + roomId + ") creata da " + hostNickname
+        String cleanHostNick = sanitizeText(hostNickname, 32, "Planeswalker");
+        joinOrReconnect(hostSessionToken, cleanHostNick, this.password);
+        addSystemChat("Stanza \"" + this.roomName + "\" (" + roomId + ") creata da " + cleanHostNick
                 + " in formato " + (commanderFormat ? "Commander (EDH)" : "Constructed") + ".");
     }
 
@@ -91,6 +106,23 @@ public class GameRoom {
         return roomName;
     }
 
+    public long getCreatedAt() {
+        return createdAt;
+    }
+
+    public boolean hasActiveConnections() {
+        for (Set<Channel> channels : sessionChannels.values()) {
+            if (channels != null) {
+                for (Channel ch : channels) {
+                    if (ch != null && ch.isActive()) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     public boolean hasPassword() {
         return !password.isEmpty();
     }
@@ -99,11 +131,68 @@ public class GameRoom {
         if (password.isEmpty()) {
             return true;
         }
-        return password.equals(candidate != null ? candidate.trim() : "");
+        String cand = candidate != null ? candidate.trim() : "";
+        return MessageDigest.isEqual(
+                password.getBytes(StandardCharsets.UTF_8),
+                cand.getBytes(StandardCharsets.UTF_8)
+        );
+    }
+
+    public boolean isHost(String sessionToken) {
+        return sessionToken != null && !sessionToken.isBlank() && sessionToken.equals(hostSessionToken);
+    }
+
+    public boolean isAuthorized(String sessionToken) {
+        if (sessionToken == null || sessionToken.isBlank()) {
+            return false;
+        }
+        if (authorizedTokens.contains(sessionToken) || isSessionInRoom(sessionToken)) {
+            return true;
+        }
+        return !hasPassword();
     }
 
     public boolean isSessionInRoom(String sessionToken) {
-        return sessionToken != null && (slotToToken.containsValue(sessionToken) || sessionToken.equals(hostSessionToken));
+        return sessionToken != null && !sessionToken.isBlank()
+                && (slotToToken.containsValue(sessionToken) || sessionToken.equals(hostSessionToken));
+    }
+
+    public boolean canModifySlot(String sessionToken, int slotIndex) {
+        if (!isAuthorized(sessionToken) || lobby.isMatchActive()) {
+            return false;
+        }
+        if (slotIndex < 0 || slotIndex >= lobby.getNumberOfSlots()) {
+            return false;
+        }
+        String occupant = slotToToken.get(slotIndex);
+        if (sessionToken.equals(occupant)) {
+            return true;
+        }
+        // Host can configure AI or OPEN slots
+        if (isHost(sessionToken)) {
+            LobbySlot slot = lobby.getSlot(slotIndex);
+            return slot != null && (occupant == null || slot.getType() == LobbySlotType.AI || slot.getType() == LobbySlotType.OPEN);
+        }
+        return false;
+    }
+
+    public boolean canInspectSlotDeck(String sessionToken, int slotIndex) {
+        if (!isAuthorized(sessionToken)) {
+            return false;
+        }
+        if (slotIndex < 0 || slotIndex >= lobby.getNumberOfSlots()) {
+            return false;
+        }
+        String occupant = slotToToken.get(slotIndex);
+        if (sessionToken.equals(occupant)) {
+            return true;
+        }
+        // Host can inspect/edit AI slot decks in Lobby before the match starts, never opponent human decks
+        if (isHost(sessionToken) && !lobby.isMatchActive()) {
+            LobbySlot slot = lobby.getSlot(slotIndex);
+            return slot != null && slot.getType() == LobbySlotType.AI;
+        }
+        return false;
     }
 
     public boolean isCommanderFormat() {
@@ -115,7 +204,7 @@ public class GameRoom {
     }
 
     public Integer getSlotForSession(String sessionToken) {
-        if (sessionToken == null) return null;
+        if (sessionToken == null || sessionToken.isBlank()) return null;
         for (Map.Entry<Integer, String> entry : slotToToken.entrySet()) {
             if (sessionToken.equals(entry.getValue())) {
                 return entry.getKey();
@@ -128,12 +217,16 @@ public class GameRoom {
      * Connects or reconnects a player identified by {@code sessionToken} and {@code nickname}.
      */
     public synchronized int joinOrReconnect(String sessionToken, String nickname, String suppliedPassword) {
-        String cleanNick = (nickname != null && !nickname.isBlank()) ? nickname.trim() : "Planeswalker";
-        tokenToNickname.put(sessionToken, cleanNick);
+        if (sessionToken == null || sessionToken.trim().length() < 8) {
+            return -2;
+        }
+        String cleanNick = sanitizeText(nickname, 32, "Planeswalker");
 
-        // 1. Check if this sessionToken already has a slot in this room
+        // 1. Check if this sessionToken already has a slot or is already authorized in this room
         Integer existingSlot = getSlotForSession(sessionToken);
         if (existingSlot != null) {
+            authorizedTokens.add(sessionToken);
+            tokenToNickname.put(sessionToken, cleanNick);
             LobbySlot slot = lobby.getSlot(existingSlot);
             if (slot != null && !lobby.isMatchActive()) {
                 slot.setName(cleanNick);
@@ -142,10 +235,13 @@ public class GameRoom {
             return existingSlot;
         }
 
-        // 2. Verify password for new entrants
-        if (!checkPassword(suppliedPassword)) {
+        // 2. Verify password for new entrants (unless already authorized)
+        if (!authorizedTokens.contains(sessionToken) && !checkPassword(suppliedPassword)) {
             return -2; // Wrong password
         }
+
+        authorizedTokens.add(sessionToken);
+        tokenToNickname.put(sessionToken, cleanNick);
 
         // 3. Find first OPEN slot if match hasn't started
         if (!lobby.isMatchActive()) {
@@ -175,6 +271,7 @@ public class GameRoom {
     }
 
     public synchronized void leaveRoom(String sessionToken) {
+        if (sessionToken == null || sessionToken.isBlank()) return;
         Integer slotIdx = getSlotForSession(sessionToken);
         if (slotIdx != null && !lobby.isMatchActive()) {
             LobbySlot slot = lobby.getSlot(slotIdx);
@@ -196,9 +293,9 @@ public class GameRoom {
         }
     }
 
-    public synchronized void setFormat(String sessionToken, boolean commander) {
-        if (lobby.isMatchActive()) return;
-        if (this.commanderFormat == commander) return;
+    public synchronized boolean setFormat(String sessionToken, boolean commander) {
+        if (lobby.isMatchActive() || !isHost(sessionToken)) return false;
+        if (this.commanderFormat == commander) return true;
         this.commanderFormat = commander;
         if (commander) {
             lobby.applyVariant(GameType.Commander);
@@ -219,16 +316,25 @@ public class GameRoom {
         }
         addSystemChat("Formato della stanza cambiato in " + (commander ? "Commander (EDH - 100 carte, 40 PV)" : "Constructed (60 carte, 20 PV)") + ".");
         broadcastRoomState();
+        return true;
     }
 
-    public synchronized void configureSlot(String sessionToken, int slotIndex, String slotType, Integer team, Boolean ready) {
-        if (lobby.isMatchActive()) return;
-        if (slotIndex < 0 || slotIndex >= lobby.getNumberOfSlots()) return;
+    public synchronized boolean configureSlot(String sessionToken, int slotIndex, String slotType, Integer team, Boolean ready) {
+        if (lobby.isMatchActive() || !isAuthorized(sessionToken)) return false;
+        if (slotIndex < 0 || slotIndex >= lobby.getNumberOfSlots()) return false;
         LobbySlot slot = lobby.getSlot(slotIndex);
-        if (slot == null) return;
+        if (slot == null) return false;
+
+        String currentOccupant = slotToToken.get(slotIndex);
+        boolean isOwner = sessionToken.equals(currentOccupant);
+        boolean isRoomHost = isHost(sessionToken);
 
         if (slotType != null) {
             if ("AI".equalsIgnoreCase(slotType)) {
+                // Only Host can add AI bots, and only on OPEN or AI slots
+                if (!isRoomHost || (currentOccupant != null && slot.getType() != LobbySlotType.AI)) {
+                    return false;
+                }
                 slotToToken.remove(slotIndex);
                 slot.setType(LobbySlotType.AI);
                 String aiName = "Bot " + NameGenerator.getRandomName("Any", "Any", new ArrayList<>());
@@ -244,14 +350,21 @@ public class GameRoom {
                 }
                 addSystemChat("Aggiunto " + aiName + " (IA) al Posto " + (slotIndex + 1) + ".");
             } else if ("OPEN".equalsIgnoreCase(slotType)) {
+                // Only Host or the slot's own human occupant can free a slot
+                if (!isRoomHost && !isOwner) {
+                    return false;
+                }
                 slotToToken.remove(slotIndex);
                 slot.setType(LobbySlotType.OPEN);
                 slot.setName(null);
                 slot.setDeck(null);
                 slot.setDeckName(null);
                 slot.setIsReady(false);
-            } else if ("CLAIM".equalsIgnoreCase(slotType)) {
-                // Move this human player to this open slot
+            } else if ("CLAIM".equalsIgnoreCase(slotType) || "HUMAN".equalsIgnoreCase(slotType)) {
+                // Can only claim an OPEN slot (or one already owned by this session)
+                if (!isOwner && (slot.getType() != LobbySlotType.OPEN || currentOccupant != null)) {
+                    return false;
+                }
                 Integer prev = getSlotForSession(sessionToken);
                 Deck prevDeck = null;
                 if (prev != null && prev != slotIndex) {
@@ -277,20 +390,28 @@ public class GameRoom {
                     slot.setDeckName(deckToUse.getName());
                 }
                 slotToToken.put(slotIndex, sessionToken);
+                isOwner = true;
             }
         }
 
         if (team != null && team >= 0 && team < 8) {
+            if (!canModifySlot(sessionToken, slotIndex) && !isOwner) {
+                return false;
+            }
             slot.setTeam(team);
         }
         if (ready != null) {
+            if (!canModifySlot(sessionToken, slotIndex) && !isOwner) {
+                return false;
+            }
             slot.setIsReady(ready);
         }
         broadcastRoomState();
+        return true;
     }
 
-    public synchronized void addOrRemoveSlot(boolean add) {
-        if (lobby.isMatchActive()) return;
+    public synchronized boolean addOrRemoveSlot(String sessionToken, boolean add) {
+        if (lobby.isMatchActive() || !isHost(sessionToken)) return false;
         if (add && lobby.getNumberOfSlots() < 8) {
             lobby.addSlot();
         } else if (!add && lobby.getNumberOfSlots() > 2) {
@@ -299,14 +420,15 @@ public class GameRoom {
             lobby.removeSlot(lastIdx);
         }
         broadcastRoomState();
+        return true;
     }
 
-    public synchronized void setSlotDeck(int slotIndex, Deck deck) {
-        if (slotIndex < 0 || slotIndex >= lobby.getNumberOfSlots() || deck == null) {
-            return;
+    public synchronized boolean setSlotDeck(String sessionToken, int slotIndex, Deck deck) {
+        if (!canModifySlot(sessionToken, slotIndex) || deck == null) {
+            return false;
         }
         LobbySlot slot = lobby.getSlot(slotIndex);
-        if (slot == null) return;
+        if (slot == null) return false;
 
         ensureCommanderSectionIfNeeded(deck);
         slot.setDeck(deck);
@@ -315,6 +437,7 @@ public class GameRoom {
         addSystemChat((slot.getName() != null ? slot.getName() : ("Posto " + (slotIndex + 1)))
                 + " ha selezionato il mazzo: " + deck.getName() + ".");
         broadcastRoomState();
+        return true;
     }
 
     private void ensureCommanderSectionIfNeeded(Deck deck) {
@@ -434,10 +557,12 @@ public class GameRoom {
     }
 
     public void addChatMessage(String sender, String text) {
-        if (text == null || text.isBlank()) return;
+        String cleanText = sanitizeText(text, 400, "");
+        if (cleanText.isEmpty()) return;
+        String cleanSender = sanitizeText(sender, 32, "Giocatore");
         chatHistory.add(new ChatMessage(
-                sender != null && !sender.isBlank() ? sender : "Giocatore",
-                text.trim(),
+                cleanSender,
+                cleanText,
                 System.currentTimeMillis(),
                 false
         ));
@@ -459,6 +584,14 @@ public class GameRoom {
     // =========================================================================
 
     public void registerWebSocket(String sessionToken, Channel channel) {
+        if (!isAuthorized(sessionToken)) {
+            JsonObject err = new JsonObject();
+            err.addProperty("type", "AUTH_ERROR");
+            err.addProperty("message", "Sessione non autorizzata per questa stanza.");
+            sendToChannel(channel, err);
+            channel.close();
+            return;
+        }
         sessionChannels.computeIfAbsent(sessionToken, k -> ConcurrentHashMap.newKeySet()).add(channel);
         channel.closeFuture().addListener(f -> {
             Set<Channel> set = sessionChannels.get(sessionToken);
@@ -474,6 +607,9 @@ public class GameRoom {
     }
 
     public void handleWebSocketMessage(String sessionToken, JsonObject msg) {
+        if (!isAuthorized(sessionToken)) {
+            return;
+        }
         String type = msg.has("type") ? msg.get("type").getAsString() : "";
         switch (type) {
             case "CHAT" -> {

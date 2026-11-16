@@ -21,9 +21,13 @@ public class RoomManager {
         this.deckService = deckService;
     }
 
+    private static final int MAX_ACTIVE_ROOMS = 200;
+    private static final long STALE_ROOM_TTL_MS = 2 * 60 * 60 * 1000L; // 2 hours
+
     public static String normalizeRoomId(String rawId) {
         if (rawId == null) return "";
-        return rawId.trim().toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9_-]", "");
+        String cleaned = rawId.trim().toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9_-]", "");
+        return cleaned.length() > 16 ? cleaned.substring(0, 16) : cleaned;
     }
 
     public String generateRoomId() {
@@ -40,9 +44,21 @@ public class RoomManager {
         }
     }
 
+    private void evictStaleRoomsIfNeeded() {
+        long now = System.currentTimeMillis();
+        rooms.entrySet().removeIf(entry -> {
+            GameRoom r = entry.getValue();
+            return !r.hasActiveConnections() && (now - r.getCreatedAt() > STALE_ROOM_TTL_MS);
+        });
+    }
+
     public synchronized GameRoom createRoom(String requestedRoomId, String roomName, String password,
                                             String hostSessionToken, String hostNickname,
                                             boolean isCommander, int maxPlayers) {
+        evictStaleRoomsIfNeeded();
+        if (rooms.size() >= MAX_ACTIVE_ROOMS) {
+            throw new IllegalArgumentException("Raggiunto il numero massimo di stanze attive sul server. Riprova tra poco.");
+        }
         String roomId = normalizeRoomId(requestedRoomId);
         if (roomId.isEmpty()) {
             roomId = generateRoomId();

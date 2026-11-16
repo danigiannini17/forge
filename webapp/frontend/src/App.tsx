@@ -110,29 +110,41 @@ export const App: React.FC = () => {
 
     const currentRoomId = activeRoom.roomId;
     let unmounted = false;
+    let authRejected = false;
 
     const connectWs = () => {
-      if (unmounted) return;
+      if (unmounted || authRejected) return;
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const qs = new URLSearchParams({
-        roomId: currentRoomId,
-        sessionToken,
-        nickname,
-        password: activePassword,
-      });
-      const wsUrl = `${proto}//${window.location.host}/ws?${qs.toString()}`;
+      const wsUrl = `${proto}//${window.location.host}/ws`;
       const socket = new WebSocket(wsUrl);
       wsRef.current = socket;
 
       socket.onopen = () => {
         if (unmounted) return;
         setWsConnected(true);
+        socket.send(
+          JSON.stringify({
+            type: 'AUTH',
+            roomId: currentRoomId,
+            sessionToken,
+            nickname,
+            password: activePassword,
+          })
+        );
       };
 
       socket.onmessage = (event) => {
         if (unmounted) return;
         try {
           const msg = JSON.parse(event.data);
+          if (msg.type === 'AUTH_ERROR') {
+            authRejected = true;
+            setGlobalError(msg.message || 'Accesso alla stanza negato.');
+            setActiveRoom(null);
+            setGameState(null);
+            socket.close();
+            return;
+          }
           if (msg.type === 'ROOM_STATE' && msg.room) {
             const normRoom = normalizeRoomState(msg.room);
             setActiveRoom(normRoom);
@@ -149,13 +161,13 @@ export const App: React.FC = () => {
           } else if (msg.type === 'ERROR' && msg.message) {
             setGlobalError(msg.message);
           }
-        } catch (err) {
-          console.error('Errore parsing messaggio WS:', err);
+        } catch {
+          // Silently ignore malformed WebSocket frames without logging to browser console
         }
       };
 
       socket.onclose = () => {
-        if (unmounted) return;
+        if (unmounted || authRejected) return;
         setWsConnected(false);
         reconnectTimerRef.current = window.setTimeout(connectWs, 2000);
       };
@@ -301,10 +313,10 @@ export const App: React.FC = () => {
           </div>
           <div
             className="session-pill"
-            title="Il tuo token di sessione permette di riconoscerti e riprendere la tua mano anche se aggiorni la pagina"
+            title="La tua sessione è protetta da un token crittografico salvato localmente per riconoscerti al tavolo"
           >
-            <ShieldCheck size={14} className="emerald-icon" /> ID Giocatore Riconosciuto:{' '}
-            <code>{sessionToken.slice(0, 11)}…</code>
+            <ShieldCheck size={14} className="emerald-icon" /> Sessione Protetta:{' '}
+            <code>Attiva • Crittografata</code>
           </div>
         </div>
       </nav>

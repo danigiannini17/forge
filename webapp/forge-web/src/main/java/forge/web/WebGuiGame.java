@@ -748,6 +748,10 @@ public class WebGuiGame extends AbstractGuiGame {
         if (modal == null) {
             return null;
         }
+        PlayerView owner = getCurrentPlayer();
+        if (viewer == null || owner == null || viewer.getId() != owner.getId()) {
+            return null;
+        }
         return modal.payload;
     }
 
@@ -785,6 +789,12 @@ public class WebGuiGame extends AbstractGuiGame {
         if ("MODAL_RESPONSE".equals(action)) {
             PendingModal modal = this.currentModal;
             if (modal != null) {
+                if (msg.has("requestId") && !msg.get("requestId").isJsonNull()) {
+                    String respReqId = msg.get("requestId").getAsString();
+                    if (!respReqId.isEmpty() && !modal.requestId.equals(respReqId)) {
+                        return;
+                    }
+                }
                 modal.future.complete(msg);
             }
             return;
@@ -798,7 +808,6 @@ public class WebGuiGame extends AbstractGuiGame {
                 executeControllerAction(action, msg);
             } catch (Exception e) {
                 System.err.println("[WebGuiGame] Error executing action " + action + ": " + e.getMessage());
-                e.printStackTrace();
             }
         });
     }

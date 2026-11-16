@@ -449,7 +449,12 @@ public class GameStateSerializer {
         cObj.addProperty("isActionable", actStrength > 0);
         cObj.addProperty("actionableStrength", actStrength);
 
-        boolean canShow = forceVisible || viewer == null || cv.canBeShownTo(viewer);
+        boolean isPublicZone = zone == ZoneType.Battlefield
+                || zone == ZoneType.Graveyard
+                || zone == ZoneType.Command
+                || zone == ZoneType.Stack
+                || (zone == ZoneType.Exile && !cv.isFaceDown());
+        boolean canShow = forceVisible || (viewer != null ? cv.canBeShownTo(viewer) : isPublicZone);
         if (!canShow) {
             cObj.addProperty("hidden", true);
             cObj.addProperty("name", "Carta Coperta");
@@ -465,16 +470,23 @@ public class GameStateSerializer {
         cObj.addProperty("hidden", false);
         CardStateView state = cv.getCurrentState();
         boolean canPeekFaceDown = cv.isFaceDown() && viewer != null && cv.canFaceDownBeShownTo(viewer);
-        if (cv.isFaceDown() && !canPeekFaceDown && zone == ZoneType.Battlefield) {
-            // Morph / Manifested card on battlefield controlled by opponent
-            cObj.addProperty("name", "Creatura Coperta (2/2)");
+        if (cv.isFaceDown() && !canPeekFaceDown) {
+            if (zone == ZoneType.Battlefield) {
+                cObj.addProperty("name", "Creatura Coperta (2/2)");
+                cObj.addProperty("type", "Creature");
+                cObj.addProperty("power", state != null ? state.getPower() : 2);
+                cObj.addProperty("toughness", state != null ? state.getToughness() : 2);
+                cObj.addProperty("oracleText", "Permanente a faccia in giù");
+                cObj.addProperty("fullText", "Permanente a faccia in giù");
+            } else {
+                cObj.addProperty("hidden", true);
+                cObj.addProperty("name", "Carta Coperta");
+                cObj.addProperty("type", "");
+                cObj.addProperty("oracleText", "");
+                cObj.addProperty("fullText", "");
+            }
             cObj.addProperty("oracleName", "");
             cObj.addProperty("manaCost", "");
-            cObj.addProperty("type", "Creature");
-            cObj.addProperty("power", state != null ? state.getPower() : 2);
-            cObj.addProperty("toughness", state != null ? state.getToughness() : 2);
-            cObj.addProperty("oracleText", "Permanente a faccia in giù");
-            cObj.addProperty("fullText", "Permanente a faccia in giù");
             cObj.addProperty("imageUrl", "https://cards.scryfall.io/back.png");
             return cObj;
         }
