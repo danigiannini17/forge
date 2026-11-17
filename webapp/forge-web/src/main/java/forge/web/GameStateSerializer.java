@@ -16,11 +16,16 @@ import forge.game.combat.CombatView;
 import forge.game.keyword.KeywordCollectionView;
 import forge.game.keyword.KeywordView;
 import forge.game.phase.PhaseType;
+import forge.game.player.Player;
 import forge.game.player.PlayerView;
 import forge.game.spellability.StackItemView;
 import forge.game.zone.ZoneType;
 import forge.gamemodes.match.Selection;
+import forge.gamemodes.match.input.Input;
+import forge.gamemodes.match.input.InputConfirmMulligan;
+import forge.gamemodes.match.input.InputLondonMulligan;
 import forge.item.PaperCard;
+import forge.player.PlayerControllerHuman;
 import forge.util.ImageUtil;
 import forge.util.collect.FCollectionView;
 
@@ -43,10 +48,26 @@ public class GameStateSerializer {
 
         root.addProperty("active", true);
         root.addProperty("gameId", gameView.getId());
-        root.addProperty("title", gameView.getTitle() != null ? gameView.getTitle() : "");
+        String matchTitle = gameView.getTitle() != null ? gameView.getTitle() : "";
+        if (gui != null && gui.getRoom() != null) {
+            root.addProperty("roomName", gui.getRoom().getRoomName());
+        }
         root.addProperty("isCommander", gameView.isCommander());
         root.addProperty("gameType", gameView.getGameType() != null ? gameView.getGameType().name() : "Constructed");
         root.addProperty("turn", gameView.getTurn());
+
+        int playerCount = gameView.getPlayers() != null ? Math.max(1, gameView.getPlayers().size()) : 1;
+        int round = Math.max(1, (Math.max(1, gameView.getTurn()) - 1) / playerCount + 1);
+        try {
+            if (gameView.getGame() != null
+                    && gameView.getGame().getPhaseHandler() != null
+                    && gameView.getGame().getPhaseHandler().getPlayerTurn() != null) {
+                Player pt = gameView.getGame().getPhaseHandler().getPlayerTurn();
+                round = Math.max(1, pt.getTurn() - pt.getExtraTurnsPlayed());
+            }
+        } catch (Exception ignored) {
+        }
+        root.addProperty("round", round);
 
         PhaseType phase = gameView.getPhase();
         root.addProperty("phase", phase != null ? phase.name() : "");
@@ -184,6 +205,33 @@ public class GameStateSerializer {
         }
         root.add("players", playersArr);
 
+        // Cumulative room win standings (always up-to-date on Game Over and across rematches)
+        JsonArray standingsArr = new JsonArray();
+        Map<String, Integer> roomWins = (gui != null && gui.getRoom() != null)
+                ? gui.getRoom().getPlayerWinsSnapshot()
+                : Collections.emptyMap();
+        List<String> winCounts = new ArrayList<>();
+        if (allPlayers != null) {
+            for (PlayerView pv : allPlayers) {
+                if (pv == null) continue;
+                JsonObject sObj = new JsonObject();
+                String pName = pv.getName() != null ? pv.getName() : "Player";
+                sObj.addProperty("name", pName);
+                int wins = roomWins.getOrDefault(pName, 0);
+                if (wins == 0 && gameView.isGameOver() && pName.equals(gameView.getWinningPlayerName())) {
+                    wins = 1;
+                }
+                sObj.addProperty("wins", wins);
+                standingsArr.add(sObj);
+                winCounts.add(String.valueOf(wins));
+            }
+        }
+        if (!winCounts.isEmpty() && !matchTitle.isEmpty()) {
+            matchTitle = matchTitle.replaceAll("\\(\\d+(?:-\\d+)+\\)\\s*$", "(" + String.join("-", winCounts) + ")");
+        }
+        root.addProperty("title", matchTitle);
+        root.add("winStandings", standingsArr);
+
         // Stack
         JsonArray stackArr = new JsonArray();
         FCollectionView<StackItemView> stack = gameView.getStack();
@@ -213,16 +261,77 @@ public class GameStateSerializer {
         root.add("gameLog", logArr);
 
         // Active prompt & controls for this viewer
+        boolean isSelecting = !selectableCardIds.isEmpty() || !selectablePlayerIds.isEmpty() || !selectableStackIds.isEmpty();
+        root.addProperty("isSelecting", isSelecting);
+        root.addProperty("selectionMin", selection != null ? selection.min() : 0);
+        root.addProperty("selectionMax", selection != null ? selection.max() : 0);
+        root.add("selectableCardIds", toIntJsonArray(selectableCardIds));
+        root.add("selectablePlayerIds", toIntJsonArray(selectablePlayerIds));
+        root.add("selectableStackIds", toIntJsonArray(selectableStackIds));
+        root.add("chosenIds", toIntJsonArray(chosenIds));
+
+        JsonArray actionableArr = new JsonArray();
+        JsonArray autotapArr = new JsonArray();
+        for (Map.Entry<Integer, Integer> e : actionableCardStrength.entrySet()) {
+            if (e.getValue() != null && e.getValue() >= 1) {
+                actionableArr.add(e.getKey());
+                if (e.getValue() >= 2) {
+                    autotapArr.add(e.getKey());
+                }
+            }
+        }
+        root.add("actionableCardIds", actionableArr);
+        root.add("autotapCardIds", autotapArr);
+
         if (gui != null) {
+            List<Integer> revealedIds = gui.getRevealedCardIds();
+            if (!revealedIds.isEmpty()) {
+                root.add("revealedCardIds", toIntJsonArray(revealedIds));
+            }
             root.add("prompt", gui.serializePromptState());
             JsonObject modal = gui.serializePendingModal(viewer);
             if (modal != null) {
                 root.add("pendingModal", modal);
             }
             root.add("yieldState", gui.serializeYieldState());
+            if (gui.getGameController() instanceof PlayerControllerHuman pch) {
+                try {
+                    Input inp = pch.getInputProxy() != null ? pch.getInputProxy().getInput() : null;
+                    if (inp instanceof InputConfirmMulligan icm) {
+                        JsonObject mObj = new JsonObject();
+                        mObj.addProperty("active", true);
+                        mObj.addProperty("step", "DECIDE");
+                        mObj.addProperty("cardsToBottom", icm.getCardsToReturn());
+                        mObj.addProperty("startingPlayerName",
+                                icm.getStartingPlayer() != null && icm.getStartingPlayer().getName() != null
+                                        ? icm.getStartingPlayer().getName() : "");
+                        root.add("mulliganState", mObj);
+                    } else if (inp instanceof InputLondonMulligan ilm) {
+                        JsonObject mObj = new JsonObject();
+                        mObj.addProperty("active", true);
+                        mObj.addProperty("step", "TUCK");
+                        mObj.addProperty("cardsToBottom", ilm.getToReturn());
+                        mObj.addProperty("selectedCount", chosenIds.size());
+                        root.add("mulliganState", mObj);
+                    }
+                } catch (Exception ignored) {
+                }
+            }
         }
 
         return root;
+    }
+
+    private static JsonArray toIntJsonArray(Collection<Integer> ids) {
+        JsonArray arr = new JsonArray();
+        if (ids != null) {
+            for (Integer id : ids) {
+                if (id != null) {
+                    arr.add(id);
+                }
+            }
+        }
+        return arr;
     }
 
     private static JsonObject serializePlayer(

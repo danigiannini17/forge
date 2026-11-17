@@ -21,9 +21,14 @@ public class MulliganService {
     }
 
     public void perform() {
-        initializeMulligans();
-        runPlayerMulligans();
-        runPostMulligans();
+        game.getView().updateIsMulligan(true);
+        try {
+            initializeMulligans();
+            runPlayerMulligans();
+            runPostMulligans();
+        } finally {
+            game.getView().updateIsMulligan(false);
+        }
     }
 
     private void initializeMulligans() {

@@ -49,11 +49,25 @@ public class InputConfirmMulligan extends InputSyncronizedBase {
     private final CardCollection selected = new CardCollection();
     private final Player player;
     private final Player startingPlayer;
+    private final int cardsToReturn;
 
     public InputConfirmMulligan(final PlayerControllerHuman controller, final Player humanPlayer, final Player startsGame) {
+        this(controller, humanPlayer, startsGame, 0);
+    }
+
+    public InputConfirmMulligan(final PlayerControllerHuman controller, final Player humanPlayer, final Player startsGame, final int cardsToReturn) {
         super(controller);
         player = humanPlayer;
         startingPlayer = startsGame;
+        this.cardsToReturn = Math.max(0, cardsToReturn);
+    }
+
+    public int getCardsToReturn() {
+        return cardsToReturn;
+    }
+
+    public Player getStartingPlayer() {
+        return startingPlayer;
     }
 
     /** {@inheritDoc} */

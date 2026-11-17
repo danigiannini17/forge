@@ -1556,7 +1556,7 @@ public class PlayerControllerHuman extends PlayerController implements IGameCont
     public boolean mulliganKeepHand(final Player mulliganingPlayer, int cardsToReturn) {
         // TODO we should be passing tuckCards into Confirmation Dialog
         while (true) {
-            final InputConfirmMulligan inp = new InputConfirmMulligan(this, player, mulliganingPlayer);
+            final InputConfirmMulligan inp = new InputConfirmMulligan(this, player, mulliganingPlayer, cardsToReturn);
             inp.showAndWait();
             if (!inp.hasUsedSerumPowder()) {
                 return inp.isKeepHand();

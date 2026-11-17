@@ -164,6 +164,9 @@ export interface CardViewState {
   alternatePower?: number;
   alternateToughness?: number;
   alternateImageUrl?: string;
+  artCropUrl?: string;
+  isSelectable?: boolean;
+  isActionable?: boolean;
   actionableStrength?: number; // 0 = none, 1 = playable, 2 = autotap
   selected?: boolean;
 }
@@ -235,11 +238,14 @@ export interface PlayerViewState {
 }
 
 export interface StackItemState {
+  id?: number;
   key: string;
   text: string;
   optionalTrigger: boolean;
   isTrigger: boolean;
   ability: boolean;
+  isSelectable?: boolean;
+  optionalCostString?: string;
   activatingPlayerId: number;
   activatingPlayerName: string;
   sourceCard?: CardViewState;
@@ -266,6 +272,8 @@ export interface PromptState {
   message: string;
   notification?: string;
   card?: CardViewState;
+  focusedCard?: CardViewState;
+  invalidActionSeq?: number;
   okEnabled: boolean;
   cancelEnabled: boolean;
   okText: string;
@@ -337,20 +345,38 @@ export interface GameLogEntry {
   summary: string;
 }
 
+export interface MulliganState {
+  active: boolean;
+  step: 'DECIDE' | 'TUCK';
+  cardsToBottom: number;
+  startingPlayerName?: string;
+  selectedCount?: number;
+}
+
+export interface WinStandingEntry {
+  name: string;
+  wins: number;
+}
+
 export interface GameStatePayload {
   roomId: string;
+  roomName?: string;
   slotIndex: number;
   localPlayerName: string;
   title: string;
   gameFormat: string;
   isCommander: boolean;
   turn: number;
+  round: number;
   phase: string;
   phaseLabel: string;
   playerTurnName: string;
   playerTurnId: number;
   isMyTurn: boolean;
   hasPriority: boolean;
+  isMulligan?: boolean;
+  mulliganState?: MulliganState | null;
+  winStandings?: WinStandingEntry[];
   gameOver: boolean;
   winningPlayerName?: string;
   winningTeam: number;
@@ -359,6 +385,9 @@ export interface GameStatePayload {
   initiativeName?: string;
   dayTime?: boolean;
   undoAvailable: boolean;
+  isSelecting?: boolean;
+  selectionMin?: number;
+  selectionMax?: number;
   canSelectCards: boolean;
   canSelectPlayers: boolean;
   isDeclareAttackers: boolean;
@@ -366,9 +395,13 @@ export interface GameStatePayload {
   prompt: PromptState;
   yieldState: YieldState;
   pendingModal: PendingModalState | null;
+  selectableCardIds: number[];
+  selectablePlayerIds: number[];
+  selectableStackIds: number[];
   actionableCardIds: number[];
   autotapCardIds: number[];
   selectedCardIds: number[];
+  revealedCardIds?: number[];
   stack: StackItemState[];
   combat: CombatState | null;
   players: PlayerViewState[];

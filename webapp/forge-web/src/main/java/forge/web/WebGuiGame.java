@@ -33,6 +33,7 @@ import forge.util.ITriggerEvent;
 
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -69,11 +70,15 @@ public class WebGuiGame extends AbstractGuiGame {
     private volatile boolean focusOk = false;
     private volatile boolean undoAvailable = false;
     private volatile String lastNotification = null;
+    private volatile int focusedCardId = -1;
+    private final AtomicLong invalidActionSeq = new AtomicLong(0);
+    private final List<Integer> revealedCardIds = Collections.synchronizedList(new ArrayList<>());
 
     private volatile PendingModal currentModal = null;
     private final Set<PhaseType> skippedOwnPhases = ConcurrentHashMap.newKeySet();
     private final Set<PhaseType> skippedOpponentPhases = ConcurrentHashMap.newKeySet();
-    private volatile boolean autoPassNoActions = false;
+    private volatile boolean autoPassNoActions = true;
+    private final AtomicBoolean controllerYieldSeeded = new AtomicBoolean(false);
 
     public WebGuiGame(GameRoom room, String sessionToken, int slotIndex) {
         this.room = room;
@@ -101,6 +106,10 @@ public class WebGuiGame extends AbstractGuiGame {
         skippedOpponentPhases.add(PhaseType.CLEANUP);
     }
 
+    public GameRoom getRoom() {
+        return room;
+    }
+
     public String getSessionToken() {
         return sessionToken;
     }
@@ -123,8 +132,37 @@ public class WebGuiGame extends AbstractGuiGame {
         room.broadcastGameState();
     }
 
+    private void ensureYieldPrefsSynced() {
+        IGameController ctrl = getGameController();
+        if (ctrl == null) {
+            return;
+        }
+        if (controllerYieldSeeded.compareAndSet(false, true)) {
+            try {
+                ctrl.applyYieldUpdate(new YieldUpdate.SetYieldPref(FPref.YIELD_AUTO_PASS_NO_ACTIONS, String.valueOf(autoPassNoActions)));
+                ctrl.applyYieldUpdate(new YieldUpdate.SetYieldPref(FPref.YIELD_AUTO_PASS_RESPECTS_INTERRUPTS, "false"));
+                ctrl.applyYieldUpdate(new YieldUpdate.SetYieldPref(FPref.YIELD_SKIP_PHASE_DELAY, "true"));
+                ctrl.applyYieldUpdate(new YieldUpdate.SetYieldPref(FPref.YIELD_SKIP_RESOLVE_DELAY, "true"));
+                GameView gv = getGameView();
+                PlayerView me = getCurrentPlayer();
+                if (gv != null && gv.getPlayers() != null) {
+                    for (PlayerView pv : gv.getPlayers()) {
+                        if (pv == null) continue;
+                        boolean isMe = me != null && pv.getId() == me.getId();
+                        Set<PhaseType> phases = isMe ? skippedOwnPhases : skippedOpponentPhases;
+                        for (PhaseType pt : phases) {
+                            ctrl.applyYieldUpdate(new YieldUpdate.SkipPhase(pv, pt, true));
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
     @Override
     protected void updateCurrentPlayer(PlayerView player) {
+        ensureYieldPrefsSynced();
         notifyStateChanged();
     }
 
@@ -143,6 +181,7 @@ public class WebGuiGame extends AbstractGuiGame {
                 }
             }
         }
+        ensureYieldPrefsSynced();
         notifyStateChanged();
     }
 
@@ -187,7 +226,13 @@ public class WebGuiGame extends AbstractGuiGame {
     }
 
     @Override
+    public boolean canPickStackTargets() {
+        return true;
+    }
+
+    @Override
     public void flashIncorrectAction() {
+        invalidActionSeq.incrementAndGet();
         notifyStateChanged();
     }
 
@@ -215,6 +260,7 @@ public class WebGuiGame extends AbstractGuiGame {
 
     @Override
     public void updatePhase(boolean saveState) {
+        ensureYieldPrefsSynced();
         notifyStateChanged();
     }
 
@@ -270,6 +316,33 @@ public class WebGuiGame extends AbstractGuiGame {
 
     @Override
     public void setCard(CardView card) {
+        this.focusedCardId = card != null ? card.getId() : -1;
+        notifyStateChanged();
+    }
+
+    @Override
+    public void showRevealedCards(Iterable<CardView> cards) {
+        revealedCardIds.clear();
+        if (cards != null) {
+            for (CardView cv : cards) {
+                if (cv != null) {
+                    revealedCardIds.add(cv.getId());
+                }
+            }
+        }
+        notifyStateChanged();
+    }
+
+    @Override
+    public void hideRevealedCards() {
+        revealedCardIds.clear();
+        notifyStateChanged();
+    }
+
+    public List<Integer> getRevealedCardIds() {
+        synchronized (revealedCardIds) {
+            return new ArrayList<>(revealedCardIds);
+        }
     }
 
     @Override
@@ -752,7 +825,7 @@ public class WebGuiGame extends AbstractGuiGame {
         if (toTop && toBottom) {
             // e.g. Scry / Surveil: choose which cards to put on the bottom (or graveyard)
             List<CardView> toBottomCards = getChoices(
-                    title + " - Seleziona le carte da mettere in fondo (le non selezionate restano in cima)",
+                    title + " — Seleziona solo le carte da mettere IN FONDO al grimorio (le carte NON selezionate resteranno IN CIMA)",
                     0, manip.size(), manip, null, null
             );
             List<CardView> result = new ArrayList<>();
@@ -800,6 +873,15 @@ public class WebGuiGame extends AbstractGuiGame {
                 ));
             }
         }
+        if (focusedCardId != -1) {
+            CardView focusedCv = findCardViewById(getGameView(), focusedCardId);
+            if (focusedCv != null) {
+                p.add("focusedCard", GameStateSerializer.serializeCard(
+                        focusedCv, getCurrentPlayer(), null, null, null, null, null, null, false
+                ));
+            }
+        }
+        p.addProperty("invalidActionSeq", invalidActionSeq.get());
         p.addProperty("okLabel", okLabel);
         p.addProperty("cancelLabel", cancelLabel);
         p.addProperty("okEnabled", okEnabled);
@@ -953,7 +1035,23 @@ public class WebGuiGame extends AbstractGuiGame {
                 int cardId = msg.has("cardId") ? msg.get("cardId").getAsInt() : -1;
                 CardView targetCard = findCardViewById(gv, cardId);
                 if (targetCard != null) {
-                    controller.selectCard(targetCard, null, null);
+                    List<CardView> otherCards = null;
+                    if (msg.has("otherCardIds") && msg.get("otherCardIds").isJsonArray()) {
+                        JsonArray otherArr = msg.getAsJsonArray("otherCardIds");
+                        List<CardView> resolved = new ArrayList<>();
+                        for (JsonElement el : otherArr) {
+                            if (el != null && el.isJsonPrimitive()) {
+                                CardView extra = findCardViewById(gv, el.getAsInt());
+                                if (extra != null && extra.getId() != targetCard.getId()) {
+                                    resolved.add(extra);
+                                }
+                            }
+                        }
+                        if (!resolved.isEmpty()) {
+                            otherCards = resolved;
+                        }
+                    }
+                    controller.selectCard(targetCard, otherCards, null);
                 }
             }
             case "AUTO_PASS_EOT", "AUTO_PASS_UNTIL_END_OF_TURN" -> {
@@ -984,12 +1082,13 @@ public class WebGuiGame extends AbstractGuiGame {
                 boolean enabled = msg.has("enabled") ? msg.get("enabled").getAsBoolean() : !autoPassNoActions;
                 this.autoPassNoActions = enabled;
                 controller.applyYieldUpdate(new YieldUpdate.SetYieldPref(FPref.YIELD_AUTO_PASS_NO_ACTIONS, String.valueOf(enabled)));
+                controller.applyYieldUpdate(new YieldUpdate.SetYieldPref(FPref.YIELD_AUTO_PASS_RESPECTS_INTERRUPTS, "false"));
                 notifyStateChanged();
             }
             case "TOGGLE_SKIP_PHASE" -> {
                 String phaseStr = msg.has("phase") ? msg.get("phase").getAsString() : "";
-                boolean isOwnTurn = msg.has("isOwnTurn") ? msg.get("isOwnTurn").getAsBoolean()
-                        : (!msg.has("ownTurn") || msg.get("ownTurn").getAsBoolean());
+                boolean isOwnTurn = msg.has("ownTurn") ? msg.get("ownTurn").getAsBoolean()
+                        : (!msg.has("isOwnTurn") || msg.get("isOwnTurn").getAsBoolean());
                 try {
                     PhaseType pt = PhaseType.valueOf(phaseStr);
                     Set<PhaseType> targetSet = isOwnTurn ? skippedOwnPhases : skippedOpponentPhases;
@@ -1001,9 +1100,18 @@ public class WebGuiGame extends AbstractGuiGame {
                         targetSet.add(pt);
                         nowSkipped = true;
                     }
-                    PlayerView turnPlayer = gv.getPlayerTurn();
-                    if (turnPlayer != null) {
-                        controller.applyYieldUpdate(new YieldUpdate.SkipPhase(turnPlayer, pt, nowSkipped));
+                    PlayerView me = getCurrentPlayer();
+                    if (isOwnTurn) {
+                        PlayerView repPlayer = me != null ? me : gv.getPlayerTurn();
+                        if (repPlayer != null) {
+                            controller.applyYieldUpdate(new YieldUpdate.SkipPhase(repPlayer, pt, nowSkipped));
+                        }
+                    } else if (gv.getPlayers() != null) {
+                        for (PlayerView pv : gv.getPlayers()) {
+                            if (pv != null && (me == null || pv.getId() != me.getId())) {
+                                controller.applyYieldUpdate(new YieldUpdate.SkipPhase(pv, pt, nowSkipped));
+                            }
+                        }
                     }
                     notifyStateChanged();
                 } catch (Exception ignored) {
@@ -1025,6 +1133,13 @@ public class WebGuiGame extends AbstractGuiGame {
                 for (CardView cv : pv.getFlashback()) if (cv != null && cv.getId() == cardId) return cv;
                 if (pv.getCommanders() != null) {
                     for (CardView cv : pv.getCommanders()) if (cv != null && cv.getId() == cardId) return cv;
+                }
+            }
+        }
+        if (gv.getStack() != null) {
+            for (StackItemView siv : gv.getStack()) {
+                if (siv != null && siv.getSourceCard() != null && siv.getSourceCard().getId() == cardId) {
+                    return siv.getSourceCard();
                 }
             }
         }

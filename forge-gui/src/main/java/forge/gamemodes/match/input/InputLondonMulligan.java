@@ -52,6 +52,10 @@ public class InputLondonMulligan extends InputSyncronizedBase {
         toReturn = returning;
     }
 
+    public int getToReturn() {
+        return toReturn;
+    }
+
     /** {@inheritDoc} */
     @Override
     public final void showMessage() {

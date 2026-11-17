@@ -108,6 +108,13 @@ export const DeckSelectorModal: React.FC<DeckSelectorModalProps> = ({
   const [selectedCatalogDeck, setSelectedCatalogDeck] = useState<DeckCatalogEntry | null>(null);
   const [previewSummary, setPreviewSummary] = useState<DeckSummary | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
+  const [hoveredDeckCard, setHoveredDeckCard] = useState<{
+    name: string;
+    imageUrl?: string;
+    type?: string;
+    x: number;
+    y: number;
+  } | null>(null);
 
   // Tab 2: Import Text state
   const [importName, setImportName] = useState(
@@ -601,12 +608,34 @@ export const DeckSelectorModal: React.FC<DeckSelectorModalProps> = ({
                     <div className="preview-loading">Lettura lista carte in corso...</div>
                   ) : (
                     previewSummary && (
-                      <div className="deck-cardlist-scroll">
+                      <div
+                        className="deck-cardlist-scroll"
+                        onMouseLeave={() => setHoveredDeckCard(null)}
+                      >
                         {previewSummary.commanders.length > 0 && (
                           <div className="deck-section-group">
                             <h4>Zona di Comando</h4>
                             {previewSummary.commanders.map((c, idx) => (
-                              <div key={idx} className="deck-line-row commander-row">
+                              <div
+                                key={idx}
+                                className="deck-line-row commander-row"
+                                onMouseEnter={(e) =>
+                                  setHoveredDeckCard({
+                                    name: c.name,
+                                    imageUrl: c.imageUrl,
+                                    type: c.type,
+                                    x: e.clientX,
+                                    y: e.clientY,
+                                  })
+                                }
+                                onMouseMove={(e) =>
+                                  setHoveredDeckCard((prev) =>
+                                    prev
+                                      ? { ...prev, x: e.clientX, y: e.clientY }
+                                      : null
+                                  )
+                                }
+                              >
                                 <span className="deck-line-qty">1x</span>
                                 <span className="deck-line-name">{c.name}</span>
                                 <ManaCostDisplay text={c.manaCost} size="sm" />
@@ -617,7 +646,26 @@ export const DeckSelectorModal: React.FC<DeckSelectorModalProps> = ({
                         <div className="deck-section-group">
                           <h4>Mazzo Principale ({previewSummary.mainCount})</h4>
                           {previewSummary.main.map((c, idx) => (
-                            <div key={idx} className="deck-line-row">
+                            <div
+                              key={idx}
+                              className="deck-line-row"
+                              onMouseEnter={(e) =>
+                                setHoveredDeckCard({
+                                  name: c.name,
+                                  imageUrl: c.imageUrl,
+                                  type: c.type,
+                                  x: e.clientX,
+                                  y: e.clientY,
+                                })
+                              }
+                              onMouseMove={(e) =>
+                                setHoveredDeckCard((prev) =>
+                                  prev
+                                    ? { ...prev, x: e.clientX, y: e.clientY }
+                                    : null
+                                )
+                              }
+                            >
                               <span className="deck-line-qty">{c.count}x</span>
                               <span className="deck-line-name">{c.name}</span>
                               <ManaCostDisplay text={c.manaCost} size="sm" />
@@ -988,7 +1036,10 @@ export const DeckSelectorModal: React.FC<DeckSelectorModalProps> = ({
                 </button>
               </div>
 
-              <div className="builder-list-scroll">
+              <div
+                className="builder-list-scroll"
+                onMouseLeave={() => setHoveredDeckCard(null)}
+              >
                 <div className="deck-section-group">
                   <h4>
                     Comandante ({builderCommanders.length})
@@ -1000,7 +1051,24 @@ export const DeckSelectorModal: React.FC<DeckSelectorModalProps> = ({
                     </p>
                   ) : (
                     builderCommanders.map((c) => (
-                      <div key={c.name} className="deck-line-row commander-row">
+                      <div
+                        key={c.name}
+                        className="deck-line-row commander-row"
+                        onMouseEnter={(e) =>
+                          setHoveredDeckCard({
+                            name: c.name,
+                            imageUrl: c.imageUrl,
+                            type: c.type,
+                            x: e.clientX,
+                            y: e.clientY,
+                          })
+                        }
+                        onMouseMove={(e) =>
+                          setHoveredDeckCard((prev) =>
+                            prev ? { ...prev, x: e.clientX, y: e.clientY } : null
+                          )
+                        }
+                      >
                         <Crown size={13} className="gold-icon" />
                         <span className="deck-line-name">{c.name}</span>
                         <button
@@ -1021,7 +1089,24 @@ export const DeckSelectorModal: React.FC<DeckSelectorModalProps> = ({
                     {room.isCommander ? 99 : 60} carte)
                   </h4>
                   {builderMain.map((c) => (
-                    <div key={c.name} className="deck-line-row">
+                    <div
+                      key={c.name}
+                      className="deck-line-row"
+                      onMouseEnter={(e) =>
+                        setHoveredDeckCard({
+                          name: c.name,
+                          imageUrl: c.imageUrl,
+                          type: c.type,
+                          x: e.clientX,
+                          y: e.clientY,
+                        })
+                      }
+                      onMouseMove={(e) =>
+                        setHoveredDeckCard((prev) =>
+                          prev ? { ...prev, x: e.clientX, y: e.clientY } : null
+                        )
+                      }
+                    >
                       <div className="qty-controls">
                         <button
                           type="button"
@@ -1052,6 +1137,49 @@ export const DeckSelectorModal: React.FC<DeckSelectorModalProps> = ({
               >
                 <Check size={16} /> Salva e Usa Questo Mazzo ({totalBuilderMain + builderCommanders.length} carte)
               </button>
+            </div>
+          </div>
+        )}
+
+        {hoveredDeckCard && (
+          <div
+            className="deck-card-hover-tooltip"
+            style={{
+              left:
+                hoveredDeckCard.x > 310
+                  ? `${hoveredDeckCard.x - 268}px`
+                  : `${hoveredDeckCard.x + 22}px`,
+              top: `${Math.max(
+                16,
+                Math.min(
+                  (typeof window !== 'undefined' ? window.innerHeight : 800) -
+                    370,
+                  hoveredDeckCard.y - 160
+                )
+              )}px`,
+            }}
+          >
+            <img
+              key={hoveredDeckCard.name}
+              src={
+                hoveredDeckCard.imageUrl ||
+                `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(
+                  hoveredDeckCard.name.split(' // ')[0]
+                )}&format=image&version=normal`
+              }
+              alt={hoveredDeckCard.name}
+              onError={(e) => {
+                const fallback = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(
+                  hoveredDeckCard.name.split(' // ')[0]
+                )}&format=image&version=normal`;
+                if (e.currentTarget.src !== fallback) {
+                  e.currentTarget.src = fallback;
+                }
+              }}
+            />
+            <div className="deck-card-hover-caption">
+              <strong>{hoveredDeckCard.name}</strong>
+              {hoveredDeckCard.type && <span>{hoveredDeckCard.type}</span>}
             </div>
           </div>
         )}

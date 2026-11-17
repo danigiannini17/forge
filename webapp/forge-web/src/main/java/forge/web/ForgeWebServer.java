@@ -5,6 +5,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import forge.MulliganDefs;
+import forge.StaticData;
 import forge.deck.Deck;
 import forge.gui.GuiBase;
 import forge.localinstance.properties.ForgePreferences.FPref;
@@ -74,8 +76,14 @@ public class ForgeWebServer {
             prefs.setPref(FPref.UI_SHOW_ACTIONABLE_HIGHLIGHTS, true);
             prefs.setPref(FPref.UI_SHOW_AUTOTAP_PREVIEW, true);
             prefs.setPref(FPref.DECKGEN_CARDBASED, false);
+            prefs.setPref(FPref.YIELD_AUTO_PASS_NO_ACTIONS, true);
+            prefs.setPref(FPref.YIELD_AUTO_PASS_RESPECTS_INTERRUPTS, false);
+            prefs.setPref(FPref.YIELD_SKIP_PHASE_DELAY, true);
+            prefs.setPref(FPref.YIELD_SKIP_RESOLVE_DELAY, true);
+            prefs.setPref(FPref.MULLIGAN_RULE, MulliganDefs.MulliganRule.London.name());
             return null;
         });
+        StaticData.instance().setMulliganRule(MulliganDefs.MulliganRule.London);
 
         DeckCatalogService deckService = new DeckCatalogService();
         deckService.initializeCatalog(assetsDir);

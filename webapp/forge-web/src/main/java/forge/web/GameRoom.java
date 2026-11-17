@@ -65,6 +65,8 @@ public class GameRoom {
     private final List<ChatMessage> chatHistory = Collections.synchronizedList(new ArrayList<>());
     private final AtomicBoolean broadcastScheduled = new AtomicBoolean(false);
     private final AtomicBoolean matchEnding = new AtomicBoolean(false);
+    private final Map<String, Integer> playerWins = new ConcurrentHashMap<>();
+    private final AtomicBoolean winRecordedForMatch = new AtomicBoolean(false);
 
     public static String sanitizeText(String raw, int maxLen, String defaultVal) {
         if (raw == null) return defaultVal;
@@ -544,6 +546,7 @@ public class GameRoom {
         }
 
         matchEnding.set(false);
+        winRecordedForMatch.set(false);
 
         // Reset and create fresh WebGuiGame instances for all human slots
         for (WebGuiGame oldGui : slotToGui.values()) {
@@ -570,6 +573,20 @@ public class GameRoom {
         return null; // success
     }
 
+    public void recordWinIfNeeded(GameView gv) {
+        if (gv == null || !gv.isGameOver()) {
+            return;
+        }
+        String winner = gv.getWinningPlayerName();
+        if (winner != null && !winner.isBlank() && winRecordedForMatch.compareAndSet(false, true)) {
+            playerWins.merge(winner, 1, Integer::sum);
+        }
+    }
+
+    public Map<String, Integer> getPlayerWinsSnapshot() {
+        return new HashMap<>(playerWins);
+    }
+
     /**
      * Broadcasts the final Game Over snapshot to all players and closes {@link HostedMatch}
      * via {@link NextGameDecision#QUIT} so the room lobby becomes ready for rematches.
@@ -577,6 +594,10 @@ public class GameRoom {
     public void notifyGameFinished(IGameController controller) {
         if (!matchEnding.compareAndSet(false, true)) {
             return;
+        }
+        HostedMatch hm = lobby.getHostedMatch();
+        if (hm != null && hm.getGameView() != null) {
+            recordWinIfNeeded(hm.getGameView());
         }
         broadcastGameStateImmediate();
         if (controller != null) {
@@ -770,6 +791,9 @@ public class GameRoom {
         env.addProperty("type", "GAME_STATE");
         HostedMatch hm = lobby.getHostedMatch();
         GameView gv = hm != null ? hm.getGameView() : null;
+        if (gv != null && gv.isGameOver()) {
+            recordWinIfNeeded(gv);
+        }
         Integer slotIdx = getSlotForSession(viewerSessionToken);
         WebGuiGame gui = slotIdx != null ? slotToGui.get(slotIdx) : null;
         var viewerPlayer = gui != null ? gui.getCurrentPlayer() : null;

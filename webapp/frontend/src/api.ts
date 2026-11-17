@@ -176,8 +176,18 @@ export function normalizeCardView(raw: any): CardViewState {
     alternatePower: raw.alternatePower,
     alternateToughness: raw.alternateToughness,
     alternateImageUrl: raw.alternateImageUrl || '',
+    artCropUrl: raw.artCropUrl || '',
+    isSelectable: Boolean(raw.isSelectable),
+    isActionable:
+      (typeof raw.actionableStrength === 'number'
+        ? raw.actionableStrength > 0
+        : Boolean(raw.isActionable)),
     actionableStrength:
-      raw.actionableStrength ?? (raw.isActionable || raw.isSelectable ? 1 : 0),
+      typeof raw.actionableStrength === 'number'
+        ? raw.actionableStrength
+        : raw.isActionable
+        ? 1
+        : 0,
     selected: Boolean(raw.selected ?? raw.isSelected),
   };
 }
@@ -296,11 +306,14 @@ export function normalizeGameState(raw: any): GameStatePayload | null {
 
   const stackRaw: any[] = Array.isArray(raw.stack) ? raw.stack : [];
   const stack: StackItemState[] = stackRaw.map((s, idx) => ({
+    id: typeof s.id === 'number' ? s.id : undefined,
     key: String(s.key ?? s.id ?? `stk_${idx}`),
     text: s.text || '',
     optionalTrigger: Boolean(s.optionalTrigger ?? s.isTrigger),
     isTrigger: Boolean(s.isTrigger ?? s.optionalTrigger),
     ability: Boolean(s.ability ?? s.isAbility),
+    isSelectable: Boolean(s.isSelectable),
+    optionalCostString: s.optionalCostString || '',
     activatingPlayerId: s.activatingPlayerId ?? -1,
     activatingPlayerName: s.activatingPlayerName || '',
     sourceCard: s.sourceCard ? normalizeCardView(s.sourceCard) : undefined,
@@ -402,15 +415,43 @@ export function normalizeGameState(raw: any): GameStatePayload | null {
   }
 
   const phase = raw.phase || 'MAIN1';
+  const playerCount = Math.max(1, players.length);
+  const rawTurn = raw.turn ?? 1;
+  const computedRound =
+    typeof raw.round === 'number' && raw.round >= 1
+      ? raw.round
+      : Math.max(1, Math.floor((Math.max(1, rawTurn) - 1) / playerCount) + 1);
+
+  const mulliganState =
+    raw.mulliganState && raw.mulliganState.active
+      ? {
+          active: true,
+          step: (raw.mulliganState.step === 'TUCK' ? 'TUCK' : 'DECIDE') as
+            | 'DECIDE'
+            | 'TUCK',
+          cardsToBottom: Number(raw.mulliganState.cardsToBottom ?? 0),
+          startingPlayerName: raw.mulliganState.startingPlayerName || '',
+          selectedCount: Number(raw.mulliganState.selectedCount ?? 0),
+        }
+      : null;
+
+  const winStandings = Array.isArray(raw.winStandings)
+    ? raw.winStandings.map((ws: any) => ({
+        name: ws.name || 'Giocatore',
+        wins: Number(ws.wins ?? 0),
+      }))
+    : undefined;
 
   return {
     roomId: raw.roomId || '',
+    roomName: raw.roomName || '',
     slotIndex: raw.slotIndex ?? 0,
     localPlayerName: localViewer?.name || 'Planeswalker',
     title: raw.title || 'Tavolo Lozzander Online',
     gameFormat: raw.gameFormat || raw.gameType || 'Commander',
     isCommander: Boolean(raw.isCommander),
-    turn: raw.turn ?? 1,
+    turn: rawTurn,
+    round: computedRound,
     phase,
     phaseLabel: raw.phaseLabel || phase,
     playerTurnName: raw.playerTurnName || '',
@@ -419,11 +460,17 @@ export function normalizeGameState(raw: any): GameStatePayload | null {
       raw.isMyTurn ?? (localViewer && raw.playerTurnId === localViewer.id)
     ),
     hasPriority: Boolean(raw.hasPriority ?? localViewer?.hasPriority),
+    isMulligan: Boolean(raw.isMulligan || mulliganState?.active),
+    mulliganState,
+    winStandings,
     gameOver: Boolean(raw.gameOver ?? raw.isGameOver),
     winningPlayerName: raw.winningPlayerName || '',
     winningTeam: raw.winningTeam ?? -1,
     stormCount: raw.stormCount ?? 0,
     undoAvailable: Boolean(raw.undoAvailable ?? promptRaw.undoAvailable),
+    isSelecting: Boolean(raw.isSelecting),
+    selectionMin: raw.selectionMin ?? 0,
+    selectionMax: raw.selectionMax ?? 0,
     canSelectCards: true,
     canSelectPlayers: true,
     isDeclareAttackers: phase === 'COMBAT_DECLARE_ATTACKERS',
@@ -432,6 +479,10 @@ export function normalizeGameState(raw: any): GameStatePayload | null {
       message: promptRaw.message || '',
       notification: promptRaw.notification || '',
       card: promptRaw.card ? normalizeCardView(promptRaw.card) : undefined,
+      focusedCard: promptRaw.focusedCard
+        ? normalizeCardView(promptRaw.focusedCard)
+        : undefined,
+      invalidActionSeq: promptRaw.invalidActionSeq ?? 0,
       okEnabled: Boolean(promptRaw.okEnabled ?? true),
       cancelEnabled: Boolean(promptRaw.cancelEnabled ?? true),
       okText: promptRaw.okText || promptRaw.okLabel || 'OK',
@@ -455,9 +506,29 @@ export function normalizeGameState(raw: any): GameStatePayload | null {
         : [],
     },
     pendingModal,
-    actionableCardIds: [],
-    autotapCardIds: [],
-    selectedCardIds: [],
+    selectableCardIds: Array.isArray(raw.selectableCardIds)
+      ? raw.selectableCardIds
+      : [],
+    selectablePlayerIds: Array.isArray(raw.selectablePlayerIds)
+      ? raw.selectablePlayerIds
+      : [],
+    selectableStackIds: Array.isArray(raw.selectableStackIds)
+      ? raw.selectableStackIds
+      : [],
+    actionableCardIds: Array.isArray(raw.actionableCardIds)
+      ? raw.actionableCardIds
+      : [],
+    autotapCardIds: Array.isArray(raw.autotapCardIds)
+      ? raw.autotapCardIds
+      : [],
+    selectedCardIds: Array.isArray(raw.chosenIds)
+      ? raw.chosenIds
+      : Array.isArray(raw.selectedCardIds)
+      ? raw.selectedCardIds
+      : [],
+    revealedCardIds: Array.isArray(raw.revealedCardIds)
+      ? raw.revealedCardIds
+      : [],
     stack,
     combat,
     players,
