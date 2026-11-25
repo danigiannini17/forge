@@ -73,6 +73,13 @@ export function normalizeRoomState(raw: any): RoomState {
       isMe: Boolean(s.isMe),
       isOnline: Boolean(s.isOnline ?? s.connected ?? true),
       commanderCards: cmdName ? [cmdName] : s.commanderCards || [],
+      commanderImageUrl: summaryObj?.commanderImageUrl || s.commanderImageUrl || '',
+      commanderArtCropUrl: summaryObj?.commanderArtCropUrl || s.commanderArtCropUrl || '',
+      colorIdentity: Array.isArray(summaryObj?.colorIdentity)
+        ? summaryObj.colorIdentity
+        : Array.isArray(s.colorIdentity)
+        ? s.colorIdentity
+        : [],
       mainCount,
     };
   });
@@ -717,13 +724,22 @@ export async function fetchDeckCatalog(): Promise<DeckCatalogResponse> {
 
   allDecks.forEach((d) => {
     const cat = String(d.category || 'PRECON').toUpperCase();
+    const cmdName = d.commanderName || '';
+    const artCropUrl =
+      d.commanderArtCropUrl ||
+      (cmdName
+        ? `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(
+            cmdName
+          )}&format=image&version=art_crop`
+        : '');
     const entry: DeckCatalogEntry = {
       id: d.id,
       name: d.name,
       category: cat,
       format: cat === 'COMMANDER' ? 'COMMANDER' : 'CONSTRUCTED',
-      commanderName: d.commanderName || '',
+      commanderName: cmdName,
       commanderImageUrl: d.commanderImageUrl || '',
+      commanderArtCropUrl: artCropUrl,
       description: d.edition ? `Edizione: ${d.edition}` : `Categoria: ${d.category}`,
     };
     if (cat === 'COMMANDER') commanderDecks.push(entry);

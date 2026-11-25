@@ -5,6 +5,7 @@ export interface DeckCatalogEntry {
   format: 'COMMANDER' | 'CONSTRUCTED' | string;
   commanderName: string;
   commanderImageUrl: string;
+  commanderArtCropUrl?: string;
   description: string;
 }
 
@@ -68,6 +69,9 @@ export interface RoomSlotInfo {
   isMe: boolean;
   isOnline: boolean;
   commanderCards?: string[];
+  commanderImageUrl?: string;
+  commanderArtCropUrl?: string;
+  colorIdentity?: string[];
   mainCount?: number;
 }
 

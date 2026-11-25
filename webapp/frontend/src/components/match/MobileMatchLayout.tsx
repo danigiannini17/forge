@@ -13,16 +13,24 @@ import {
   partitionBattlefield,
 } from './matchUtils';
 import {
+  PLAYMAT_THEMES,
+  SLEEVE_THEMES,
+  getPlaymatTheme,
+  getSleeveTheme,
+} from './playmats';
+import {
   Check,
   ChevronDown,
   Crosshair,
   FastForward,
   Flag,
+  Hand,
   Heart,
   Layers,
   LogOut,
   Menu,
   Monitor,
+  Palette,
   PauseCircle,
   RotateCcw,
   ScrollText,
@@ -40,6 +48,12 @@ export const MobileMatchLayout: React.FC<MatchLayoutProps> = ({
   gameState,
   chatMessages,
   arcMode,
+  playmatId,
+  sleeveId,
+  waitReactions,
+  onSelectPlaymat,
+  onSelectSleeve,
+  onTriggerWaitReaction,
   onCycleArcMode,
   onInspectCard,
   onZoomCard,
@@ -68,6 +82,9 @@ export const MobileMatchLayout: React.FC<MatchLayoutProps> = ({
 
   const [oppOpenZone, setOppOpenZone] = useState<DockZoneKey | null>(null);
   const [focusedOppId, setFocusedOppId] = useState<number | null>(null);
+
+  const playmatTheme = useMemo(() => getPlaymatTheme(playmatId), [playmatId]);
+  const sleeveTheme = useMemo(() => getSleeveTheme(sleeveId), [sleeveId]);
 
   const [chatInput, setChatInput] = useState('');
   const [unreadChat, setUnreadChat] = useState(false);
@@ -249,6 +266,7 @@ export const MobileMatchLayout: React.FC<MatchLayoutProps> = ({
             key={c.id}
             card={c}
             size="sm"
+            sleeveTheme={sleeveTheme}
             inHand={localZoneTab === 'HAND'}
             badgeText={badge}
             isTouchMode={true}
@@ -399,6 +417,19 @@ export const MobileMatchLayout: React.FC<MatchLayoutProps> = ({
 
         <button
           type="button"
+          className={`mob-menu-btn mob-wait-btn ${
+            localPlayer && waitReactions[localPlayer.name.trim().toLowerCase()]
+              ? 'active-wait'
+              : ''
+          }`}
+          onClick={onTriggerWaitReaction}
+          title="Aspetta / In risposta (Y)"
+        >
+          <Hand size={15} />
+        </button>
+
+        <button
+          type="button"
           className={`mob-unified-phase-btn ${
             gameState.isMyTurn ? 'my-turn' : 'opp-turn'
           } ${openSheet === 'PHASES' ? 'active' : ''}`}
@@ -442,104 +473,151 @@ export const MobileMatchLayout: React.FC<MatchLayoutProps> = ({
             </div>
 
             {openSheet === 'MENU' && (
-              <div className="mob-menu-grid">
-                <button
-                  type="button"
-                  className={`mob-action-tile ${
-                    gameState.yieldState.autoYieldAll ? 'active' : ''
-                  }`}
-                  onClick={() => {
-                    onAutoPassEot();
-                    setOpenSheet('NONE');
-                  }}
-                >
-                  <FastForward size={16} /> Passa fino a Fine Turno
-                </button>
-                <button
-                  type="button"
-                  className={`mob-action-tile ${
-                    gameState.yieldState.autoYieldStackEmpty ? 'active' : ''
-                  }`}
-                  onClick={() => {
-                    onYieldStackEmpty();
-                    setOpenSheet('NONE');
-                  }}
-                >
-                  <Layers size={16} /> Cedi Pila
-                </button>
-                <button
-                  type="button"
-                  className={`mob-action-tile ${
-                    gameState.yieldState.autoPassNoActions ? 'active' : ''
-                  }`}
-                  onClick={onToggleAutoPassNoActions}
-                >
-                  <Zap size={16} /> Auto-Pass se 0 Giocate
-                </button>
-                {isYieldActive && (
+              <div className="mob-menu-wrap">
+                <div className="mob-menu-grid">
                   <button
                     type="button"
-                    className="mob-action-tile danger"
+                    className={`mob-action-tile ${
+                      gameState.yieldState.autoYieldAll ? 'active' : ''
+                    }`}
                     onClick={() => {
-                      onCancelAutoPass();
+                      onAutoPassEot();
                       setOpenSheet('NONE');
                     }}
                   >
-                    <PauseCircle size={16} /> Interrompi Auto-Pass
+                    <FastForward size={16} /> Passa fino a Fine Turno
                   </button>
-                )}
-                <button
-                  type="button"
-                  className="mob-action-tile"
-                  onClick={onCycleArcMode}
-                >
-                  <Crosshair size={16} /> Archi Bersaglio:{' '}
-                  {arcMode === 'ALL'
-                    ? 'Tutti'
-                    : arcMode === 'HOVER'
-                    ? 'Hover'
-                    : 'Off'}
-                </button>
-                <button
-                  type="button"
-                  className="mob-action-tile"
-                  onClick={() => {
-                    setOpenSheet('NONE');
-                    onSwitchLayoutMode('DESKTOP');
-                  }}
-                >
-                  <Monitor size={16} /> Modalità Desktop
-                </button>
-                {!gameState.gameOver && !localPlayer?.hasLost && (
-                  confirmingConcede ? (
+                  <button
+                    type="button"
+                    className={`mob-action-tile ${
+                      gameState.yieldState.autoYieldStackEmpty ? 'active' : ''
+                    }`}
+                    onClick={() => {
+                      onYieldStackEmpty();
+                      setOpenSheet('NONE');
+                    }}
+                  >
+                    <Layers size={16} /> Cedi Pila
+                  </button>
+                  <button
+                    type="button"
+                    className={`mob-action-tile ${
+                      gameState.yieldState.autoPassNoActions ? 'active' : ''
+                    }`}
+                    onClick={onToggleAutoPassNoActions}
+                  >
+                    <Zap size={16} /> Auto-Pass se 0 Giocate
+                  </button>
+                  {isYieldActive && (
                     <button
                       type="button"
                       className="mob-action-tile danger"
                       onClick={() => {
-                        setConfirmingConcede(false);
+                        onCancelAutoPass();
                         setOpenSheet('NONE');
-                        onConcede();
                       }}
                     >
-                      <Flag size={16} /> Conferma Resa!
+                      <PauseCircle size={16} /> Interrompi Auto-Pass
                     </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="mob-action-tile"
-                      onClick={() => setConfirmingConcede(true)}
-                    >
-                      <Flag size={16} /> Concedi Partita
-                    </button>
-                  )
-                )}
-                <button
-                  type="button"
-                  className="mob-action-tile"
-                  onClick={onLeaveRoom}
-                >
-                  <LogOut size={16} /> Esci dalla Stanza
-                </button>
+                  )}
+                  <button
+                    type="button"
+                    className="mob-action-tile"
+                    onClick={onCycleArcMode}
+                  >
+                    <Crosshair size={16} /> Archi:{' '}
+                    {arcMode === 'ALL'
+                      ? 'Tutti'
+                      : arcMode === 'HOVER'
+                      ? 'Hover'
+                      : 'Off'}
+                  </button>
+                  <button
+                    type="button"
+                    className="mob-action-tile"
+                    onClick={() => {
+                      setOpenSheet('NONE');
+                      onSwitchLayoutMode('DESKTOP');
+                    }}
+                  >
+                    <Monitor size={16} /> Tavolo 2×2 Desktop
+                  </button>
+                  {!gameState.gameOver && !localPlayer?.hasLost && (
+                    confirmingConcede ? (
+                      <button
+                        type="button"
+                        className="mob-action-tile danger"
+                        onClick={() => {
+                          setConfirmingConcede(false);
+                          setOpenSheet('NONE');
+                          onConcede();
+                        }}
+                      >
+                        <Flag size={16} /> Conferma Resa!
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="mob-action-tile"
+                        onClick={() => setConfirmingConcede(true)}
+                      >
+                        <Flag size={16} /> Concedi Partita
+                      </button>
+                    )
+                  )}
+                  <button
+                    type="button"
+                    className="mob-action-tile"
+                    onClick={onLeaveRoom}
+                  >
+                    <LogOut size={16} /> Esci dalla Stanza
+                  </button>
+                </div>
+
+                <div className="mob-playmat-section">
+                  <div className="mob-playmat-title">
+                    <Palette size={13} className="cyan-icon" /> Playmat &amp; Sleeve
+                  </div>
+                  <div className="mob-playmat-row">
+                    {PLAYMAT_THEMES.map((pm) => (
+                      <button
+                        key={pm.id}
+                        type="button"
+                        className={`playmat-option-tile ${
+                          playmatId === pm.id ? 'selected' : ''
+                        }`}
+                        onClick={() => onSelectPlaymat(pm.id)}
+                      >
+                        <span
+                          className="playmat-swatch"
+                          style={{ background: pm.swatch }}
+                        />
+                        <span className="playmat-option-name">{pm.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="sleeve-swatches-row">
+                    {SLEEVE_THEMES.map((sl) => (
+                      <button
+                        key={sl.id}
+                        type="button"
+                        className={`sleeve-swatch-btn ${
+                          sleeveId === sl.id ? 'selected' : ''
+                        }`}
+                        onClick={() => onSelectSleeve(sl.id)}
+                      >
+                        <span
+                          className="sleeve-mini-preview"
+                          style={{
+                            background: sl.primary,
+                            borderColor: sl.border,
+                          }}
+                        />
+                        <span>{sl.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -879,7 +957,13 @@ export const MobileMatchLayout: React.FC<MatchLayoutProps> = ({
             className={`mob-player-panel local-panel ${
               localPlayer.isTurn ? 'turn-active' : ''
             } ${localZoneTab === null ? 'zone-collapsed' : ''}`}
+            style={{ background: playmatTheme.surfaceCss }}
           >
+            {Object.keys(waitReactions).length > 0 && (
+              <div className="mob-wait-toast">
+                <Hand size={13} /> Aspetta! In risposta…
+              </div>
+            )}
             {/* Local Battlefield: Creatures (or Support if 0 creatures) Top -> Lands/Support Bottom */}
             <div className="mob-bf-rows">
               <div className="mob-bf-row">

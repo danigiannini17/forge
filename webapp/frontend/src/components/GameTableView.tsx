@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CardViewState,
   ChatEntry,
@@ -16,6 +16,13 @@ import { CardZoomModal } from './match/CardZoomModal';
 import { ChoiceModalOverlay } from './match/ChoiceModalOverlay';
 import { MulliganModal } from './match/MulliganModal';
 import { isEndTurnLabel } from './match/matchUtils';
+import {
+  WAIT_REACTION_PREFIX,
+  loadSavedPlaymatId,
+  loadSavedSleeveId,
+  savePlaymatId,
+  saveSleeveId,
+} from './match/playmats';
 import { Crown, RefreshCw } from 'lucide-react';
 
 interface GameTableViewProps {
@@ -48,6 +55,9 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
     'AUTO'
   );
 
+  const [playmatId, setPlaymatId] = useState<string>(loadSavedPlaymatId);
+  const [sleeveId, setSleeveId] = useState<string>(loadSavedSleeveId);
+
   const [inspectedCard, setInspectedCard] = useState<CardViewState | null>(null);
   const [zoomedCard, setZoomedCard] = useState<CardViewState | null>(null);
   const [zoomCardList, setZoomCardList] = useState<CardViewState[]>([]);
@@ -55,6 +65,59 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
   const [arcMode, setArcMode] = useState<ArcMode>('ALL');
   const [hoveredStackKey, setHoveredStackKey] = useState<string | null>(null);
   const [hoveredCardId, setHoveredCardId] = useState<number | null>(null);
+
+  // "Aspetta / In risposta" (Y key) reaction tracking per player name
+  const [waitReactions, setWaitReactions] = useState<Record<string, number>>({});
+  const waitTimersRef = useRef<Record<string, number>>({});
+  const lastChatCountRef = useRef<number>(chatMessages.length);
+  const lastLocalWaitAtRef = useRef<number>(0);
+
+  const activateWaitBannerFor = useCallback((senderName: string) => {
+    const key = senderName.trim().toLowerCase();
+    if (!key) return;
+    if (waitTimersRef.current[key]) {
+      window.clearTimeout(waitTimersRef.current[key]);
+    }
+    setWaitReactions((prev) => ({ ...prev, [key]: Date.now() }));
+    waitTimersRef.current[key] = window.setTimeout(() => {
+      setWaitReactions((curr) => {
+        if (!(key in curr)) return curr;
+        const next = { ...curr };
+        delete next[key];
+        return next;
+      });
+      delete waitTimersRef.current[key];
+    }, 5200);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      Object.values(waitTimersRef.current).forEach((t) => window.clearTimeout(t));
+    };
+  }, []);
+
+  // Watch incoming chat messages for remote "Aspetta / In risposta" reactions
+  useEffect(() => {
+    if (chatMessages.length > lastChatCountRef.current) {
+      const fresh = chatMessages.slice(lastChatCountRef.current);
+      fresh.forEach((m) => {
+        if (m.message && m.message.startsWith(WAIT_REACTION_PREFIX)) {
+          activateWaitBannerFor(m.sender);
+        }
+      });
+    }
+    lastChatCountRef.current = chatMessages.length;
+  }, [chatMessages, activateWaitBannerFor]);
+
+  const handleSelectPlaymat = useCallback((id: string) => {
+    setPlaymatId(id);
+    savePlaymatId(id);
+  }, []);
+
+  const handleSelectSleeve = useCallback((id: string) => {
+    setSleeveId(id);
+    saveSleeveId(id);
+  }, []);
 
   // Responsive viewport listener
   useEffect(() => {
@@ -221,6 +284,31 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
     [onSendWs]
   );
 
+  const handleTriggerWaitReaction = useCallback(() => {
+    const now = Date.now();
+    // Rate-limit chat broadcast to prevent spam while still refreshing local visual
+    const localName = gameState.localPlayerName || 'Tu';
+    activateWaitBannerFor(localName);
+    if (
+      gameState.yieldState.autoYieldAll ||
+      gameState.yieldState.autoYieldEndOfStep ||
+      gameState.yieldState.autoYieldStackEmpty
+    ) {
+      onSendWs({ type: 'CANCEL_AUTO_PASS' });
+    }
+    if (now - lastLocalWaitAtRef.current > 2200) {
+      lastLocalWaitAtRef.current = now;
+      onSendWs({ type: 'CHAT', message: `${WAIT_REACTION_PREFIX}...` });
+    }
+  }, [
+    gameState.localPlayerName,
+    gameState.yieldState.autoYieldAll,
+    gameState.yieldState.autoYieldEndOfStep,
+    gameState.yieldState.autoYieldStackEmpty,
+    activateWaitBannerFor,
+    onSendWs,
+  ]);
+
   const handleConcede = useCallback(() => {
     onSendWs({ type: 'CONCEDE' });
   }, [onSendWs]);
@@ -244,7 +332,8 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
     [gameState.pendingModal, onSendWs]
   );
 
-  // Keyboard shortcuts (Space -> OK, Esc -> Close Zoom / Cancel if not End Turn, Ctrl+Z -> Undo, Z -> Zoom)
+  // Keyboard shortcuts:
+  // Space -> OK, Esc -> Close Zoom / Cancel if not End Turn, Ctrl+Z -> Undo, Z -> Zoom, Y -> Wait / In Response reaction
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -295,6 +384,19 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
         !e.ctrlKey &&
         !e.metaKey &&
         !e.altKey &&
+        e.key.toLowerCase() === 'y' &&
+        !gameState.pendingModal &&
+        !zoomedCard
+      ) {
+        e.preventDefault();
+        handleTriggerWaitReaction();
+        return;
+      }
+
+      if (
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
         e.key.toLowerCase() === 'z' &&
         !gameState.pendingModal &&
         !zoomedCard
@@ -324,6 +426,7 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
     handleUndo,
     handleButtonOk,
     handleButtonCancel,
+    handleTriggerWaitReaction,
     handleZoomCard,
   ]);
 
@@ -332,6 +435,12 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
     chatMessages,
     inspectedCard,
     arcMode,
+    playmatId,
+    sleeveId,
+    waitReactions,
+    onSelectPlaymat: handleSelectPlaymat,
+    onSelectSleeve: handleSelectSleeve,
+    onTriggerWaitReaction: handleTriggerWaitReaction,
     onCycleArcMode: handleCycleArcMode,
     onInspectCard: handleInspectCard,
     onHoverCard: setHoveredCardId,
@@ -411,7 +520,7 @@ export const GameTableView: React.FC<GameTableViewProps> = ({
       {gameState.gameOver && (
         <div className="modal-backdrop">
           <div className="modal-surface game-over-modal">
-            <Crown size={42} className="gold-icon" />
+            <Crown size={42} className="cyan-icon" />
             <h2>Partita Conclusa!</h2>
             {gameState.winningPlayerName && (
               <div className="winner-banner-pill">

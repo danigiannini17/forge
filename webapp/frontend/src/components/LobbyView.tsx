@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChatEntry, RoomSlotInfo, RoomState } from '../types';
 import { DeckSelectorModal } from './DeckSelectorModal';
+import { ManaSymbolBadge } from './ManaText';
 import {
   startRoomMatch,
   updateRoomFormatApi,
@@ -35,6 +36,13 @@ interface LobbyViewProps {
   onSendWs: (payload: Record<string, any>) => void;
   onRoomUpdated: (room: RoomState) => void;
   onLeaveRoom: () => void;
+}
+
+function getCommanderArtFallbackUrl(commanderName?: string): string {
+  if (!commanderName) return '';
+  return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(
+    commanderName
+  )}&format=image&version=art_crop`;
 }
 
 export const LobbyView: React.FC<LobbyViewProps> = ({
@@ -169,43 +177,70 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
     (s) => s.type === 'REMOTE' || s.type === 'AI'
   ).length;
 
+  const mySlot =
+    room.slots.find((s) => s.isMe) ||
+    (room.mySlotIndex >= 0 ? room.slots[room.mySlotIndex] : undefined);
+  const myCommanderName = mySlot?.commanderCards?.[0] || '';
+  const myCommanderBannerArt =
+    mySlot?.commanderArtCropUrl ||
+    getCommanderArtFallbackUrl(myCommanderName) ||
+    mySlot?.commanderImageUrl ||
+    '';
+
   return (
     <div className="lobby-container">
-      {/* Top Room Banner */}
+      {/* Top Room Header Bar */}
       <header className="lobby-header-card">
         <div className="lobby-header-left">
-          <div className="room-id-badge" onClick={handleCopyRoomId} title="Clicca per copiare l'ID Stanza">
-            <span className="room-id-label">STANZA ID</span>
-            <span className="room-id-code">{room.roomId}</span>
-            {copiedId ? <Check size={15} className="emerald-icon" /> : <Copy size={15} />}
-          </div>
-          <div>
+          <button
+            type="button"
+            className="room-id-badge"
+            onClick={handleCopyRoomId}
+            title="Clicca per copiare l'ID Stanza"
+          >
+            <span className="room-id-label">CODICE STANZA</span>
+            <span className="room-id-code-row">
+              <span className="room-id-code">{room.roomId}</span>
+              {copiedId ? (
+                <Check size={14} className="emerald-icon" />
+              ) : (
+                <Copy size={14} className="cyan-icon" />
+              )}
+            </span>
+          </button>
+
+          <div className="lobby-title-block">
             <h1 className="lobby-room-title">
               {room.roomName}
               {room.hasPassword && (
                 <span className="lock-pill" title="Protetta da Password">
-                  <Lock size={13} /> Password
+                  <Lock size={12} /> Privata
                 </span>
               )}
             </h1>
             <div className="lobby-meta-tags">
-              <span className={`format-pill ${room.isCommander ? 'commander' : 'constructed'}`}>
+              <span
+                className={`format-pill ${
+                  room.isCommander ? 'commander' : 'constructed'
+                }`}
+              >
                 {room.isCommander ? (
                   <>
-                    <Crown size={13} /> Commander / EDH (100 Carte • 40 PV)
+                    <Crown size={12} /> Commander / EDH • 40 PV
                   </>
                 ) : (
                   <>
-                    <Layers size={13} /> Costruito (60 Carte • 20 PV)
+                    <Layers size={12} /> Costruito • 20 PV
                   </>
                 )}
               </span>
               <span className="players-pill">
-                <Users size={13} /> {activeParticipantCount} / {room.maxPlayers} Giocatori al Tavolo
+                <Users size={12} /> {activeParticipantCount}/{room.maxPlayers}{' '}
+                Giocatori
               </span>
               {room.isHost && (
                 <span className="host-pill">
-                  <Sparkles size={13} /> Sei l&apos;Host della Stanza
+                  <Sparkles size={12} /> Host
                 </span>
               )}
             </div>
@@ -213,18 +248,51 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
         </div>
 
         <div className="lobby-header-actions">
-          <button type="button" className="btn-secondary" onClick={onLeaveRoom}>
-            <LogOut size={16} /> Esci dalla Stanza
+          {room.isHost && (
+            <div className="host-lobby-controls">
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                disabled={updatingRoomCfg}
+                onClick={handleToggleFormat}
+                title="Cambia formato tra Commander (100 carte, 40 PV) e Costruito (60 carte, 20 PV)"
+              >
+                {room.isCommander ? 'Costruito' : 'Commander'}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                disabled={updatingRoomCfg || room.maxPlayers <= 2}
+                onClick={() => handleAdjustSlotsCount(-1)}
+                title="Riduci posti"
+              >
+                <Minus size={13} />
+              </button>
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                disabled={updatingRoomCfg || room.maxPlayers >= 8}
+                onClick={() => handleAdjustSlotsCount(1)}
+                title="Aggiungi posto (fino a 8)"
+              >
+                <Plus size={13} />
+              </button>
+            </div>
+          )}
+
+          <button type="button" className="btn-secondary btn-sm" onClick={onLeaveRoom}>
+            <LogOut size={15} /> Esci
           </button>
+
           {room.isHost && (
             <button
               type="button"
-              className="btn-primary btn-lg"
+              className="btn-primary"
               disabled={startingGame || activeParticipantCount < 2}
               onClick={handleStartMatch}
             >
-              <Play size={18} />{' '}
-              {startingGame ? 'Avvio Partita in corso...' : 'Avvia Partita sul Tavolo'}
+              <Play size={16} />{' '}
+              {startingGame ? 'Avvio in corso...' : 'Avvia Partita'}
             </button>
           )}
         </div>
@@ -232,229 +300,337 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
 
       {errorMsg && <div className="alert-error">{errorMsg}</div>}
 
+      {/* Main Split: Left Scrollable Commander Banner + Seats | Right Always-Visible Chat */}
       <div className="lobby-main-grid">
-        {/* Seats Panel */}
-        <section className="seats-section">
-          <div className="section-heading between-wrap">
-            <div>
-              <h2>Posti al Tavolo ({room.maxPlayers} Slot)</h2>
-              <p className="muted-p">
-                Scegli il tuo posto, seleziona o costruisci il tuo mazzo e premi{' '}
-                <strong>Pronto</strong>. L&apos;Host può anche aggiungere Bot IA negli slot
-                liberi.
-              </p>
-            </div>
-            {room.isHost && (
-              <div className="host-lobby-controls">
-                <button
-                  type="button"
-                  className="btn-secondary btn-sm"
-                  disabled={updatingRoomCfg}
-                  onClick={handleToggleFormat}
-                  title="Cambia formato tra Commander (100 carte, 40 PV) e Costruito (60 carte, 20 PV)"
-                >
-                  {room.isCommander ? 'Passa a Costruito' : 'Passa a Commander'}
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary btn-sm"
-                  disabled={updatingRoomCfg || room.maxPlayers <= 2}
-                  onClick={() => handleAdjustSlotsCount(-1)}
-                  title="Riduci numero posti al tavolo"
-                >
-                  <Minus size={13} /> Posto
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary btn-sm"
-                  disabled={updatingRoomCfg || room.maxPlayers >= 8}
-                  onClick={() => handleAdjustSlotsCount(1)}
-                  title="Aggiungi un posto al tavolo (fino a 8 giocatori)"
-                >
-                  <Plus size={13} /> Posto
-                </button>
-              </div>
-            )}
-          </div>
+        <section className="lobby-left-workspace">
+          {/* EDHPlay-style Commander Hero Banner for local player */}
+          {mySlot && (
+            <div className="lobby-commander-banner">
+              {myCommanderBannerArt && (
+                <img
+                  src={myCommanderBannerArt}
+                  alt={myCommanderName || mySlot.deckName}
+                  className="lobby-cmd-banner-bg"
+                  onError={(e) => {
+                    if (
+                      mySlot.commanderImageUrl &&
+                      e.currentTarget.src !== mySlot.commanderImageUrl
+                    ) {
+                      e.currentTarget.src = mySlot.commanderImageUrl;
+                    } else {
+                      e.currentTarget.style.display = 'none';
+                    }
+                  }}
+                />
+              )}
+              <div className="lobby-cmd-banner-scrim" />
 
-          <div className="seats-grid">
-            {room.slots.map((slot) => {
-              const canEditSlot = slot.isMe || (room.isHost && slot.type === 'AI');
-              return (
-                <div
-                  key={slot.slotIndex}
-                  className={`seat-card seat-${slot.type.toLowerCase()} ${
-                    slot.isMe ? 'seat-me' : ''
-                  } ${slot.isReady ? 'seat-ready' : ''}`}
-                >
-                  <div className="seat-card-top">
-                    <div className="seat-identity">
-                      <span className="seat-number">#{slot.slotIndex + 1}</span>
-                      {slot.type === 'REMOTE' && <User size={18} className="seat-icon human" />}
-                      {slot.type === 'AI' && <Bot size={18} className="seat-icon bot" />}
-                      {slot.type === 'OPEN' && <UserPlus size={18} className="seat-icon open" />}
-
-                      <div>
-                        <div className="seat-player-name">
-                          {slot.type === 'OPEN' ? 'Posto Libero' : slot.name}
-                          {slot.isMe && <span className="you-tag">TU</span>}
-                        </div>
-                        <div className="seat-status-sub">
-                          {slot.type === 'REMOTE' && (
-                            <span
-                              className={`conn-dot ${
-                                slot.isOnline ? 'online' : 'offline'
-                              }`}
-                            >
-                              {slot.isOnline ? 'Connesso' : 'Riconnessione in attesa...'}
-                            </span>
-                          )}
-                          {slot.type === 'AI' && <span>Bot IA</span>}
-                          {slot.type === 'OPEN' && (
-                            <span>In attesa di un giocatore o Bot IA</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {slot.type !== 'OPEN' && (
-                      <div className="seat-team-selector">
-                        <Shield size={13} />
-                        <select
-                          value={slot.team}
-                          disabled={!canEditSlot && !room.isHost}
-                          onChange={(e) =>
-                            handleChangeTeam(slot.slotIndex, Number(e.target.value))
-                          }
-                          title="Squadra / Team (diverso per Tutti contro Tutti)"
-                        >
-                          {[1, 2, 3, 4, 5, 6, 7, 8].map((t) => (
-                            <option key={t} value={t}>
-                              Team {t}
-                            </option>
+              <div className="lobby-cmd-banner-content">
+                <div className="lobby-cmd-banner-left">
+                  {mySlot.commanderImageUrl && (
+                    <img
+                      src={mySlot.commanderImageUrl}
+                      alt={myCommanderName || mySlot.deckName}
+                      className="lobby-cmd-mini-card"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                      }}
+                    />
+                  )}
+                  <div className="lobby-cmd-banner-meta">
+                    <span className="lobby-cmd-eyebrow">
+                      <Crown size={12} className="cyan-icon" />{' '}
+                      {room.isCommander ? 'IL TUO COMANDANTE' : 'IL TUO MAZZO'}
+                    </span>
+                    <h2 className="lobby-cmd-name">
+                      {myCommanderName || mySlot.deckName}
+                    </h2>
+                    <div className="lobby-cmd-subrow">
+                      <span>{mySlot.deckName}</span>
+                      {mySlot.deckSummary && (
+                        <>
+                          <span>•</span>
+                          <span>{mySlot.deckSummary}</span>
+                        </>
+                      )}
+                      {mySlot.colorIdentity && mySlot.colorIdentity.length > 0 && (
+                        <span className="lobby-cmd-pips">
+                          {mySlot.colorIdentity.map((col) => (
+                            <ManaSymbolBadge key={col} symbol={col} size="sm" />
                           ))}
-                        </select>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Deck Info Box */}
-                  {slot.type !== 'OPEN' ? (
-                    <div className="seat-deck-box">
-                      <div className="seat-deck-info">
-                        <span className="seat-deck-label">Mazzo Selezionato</span>
-                        <strong className="seat-deck-name">{slot.deckName}</strong>
-                        <span className="seat-deck-summary">{slot.deckSummary}</span>
-                        {slot.commanderCards && slot.commanderCards.length > 0 && (
-                          <div className="seat-commander-chips">
-                            {slot.commanderCards.map((cName) => (
-                              <span key={cName} className="cmd-chip">
-                                <Crown size={12} /> {cName}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      {canEditSlot && (
-                        <button
-                          type="button"
-                          className="btn-secondary btn-sm"
-                          onClick={() => setEditingDeckSlot(slot)}
-                        >
-                          <Layers size={14} /> Cambia / Costruisci Mazzo
-                        </button>
+                        </span>
                       )}
                     </div>
-                  ) : (
-                    <div className="seat-open-placeholder">
-                      <p>Questo posto è aperto per altri giocatori che entrano con l&apos;ID stanza.</p>
-                    </div>
-                  )}
+                  </div>
+                </div>
 
-                  {/* Seat Footer Actions */}
-                  <div className="seat-card-footer">
-                    {slot.type === 'OPEN' && (
-                      <div className="seat-open-btns">
-                        {room.mySlotIndex === -1 && (
-                          <button
-                            type="button"
-                            className="btn-primary btn-sm"
-                            onClick={() => handleClaimSeat(slot.slotIndex)}
-                          >
-                            <UserPlus size={14} /> Siediti Qui
-                          </button>
+                <div className="lobby-cmd-banner-actions">
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm"
+                    onClick={() => setEditingDeckSlot(mySlot)}
+                  >
+                    <Layers size={14} /> Cambia Mazzo
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      mySlot.isReady ? 'btn-ready-active btn-sm' : 'btn-primary btn-sm'
+                    }
+                    onClick={() => handleToggleReady(mySlot)}
+                  >
+                    <Check size={14} />{' '}
+                    {mySlot.isReady ? 'Pronto ✓' : 'Sono Pronto'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Seats Pod Grid */}
+          <div className="lobby-seats-scroll">
+            <div className="seats-grid">
+              {room.slots.map((slot) => {
+                const canEditSlot = slot.isMe || (room.isHost && slot.type === 'AI');
+                const slotCmdName = slot.commanderCards?.[0] || '';
+                const slotArtUrl =
+                  slot.commanderArtCropUrl ||
+                  getCommanderArtFallbackUrl(slotCmdName) ||
+                  slot.commanderImageUrl ||
+                  '';
+
+                return (
+                  <div
+                    key={slot.slotIndex}
+                    className={`seat-card seat-${slot.type.toLowerCase()} ${
+                      slot.isMe ? 'seat-me' : ''
+                    } ${slot.isReady ? 'seat-ready' : ''}`}
+                  >
+                    {/* Commander Art Strip Header on occupied seats */}
+                    {slot.type !== 'OPEN' && (
+                      <div className="seat-art-banner">
+                        {slotArtUrl && (
+                          <img
+                            src={slotArtUrl}
+                            alt={slotCmdName || slot.deckName}
+                            className="seat-art-img"
+                            loading="lazy"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
                         )}
-                        {room.isHost && (
-                          <button
-                            type="button"
-                            className="btn-secondary btn-sm"
-                            onClick={() => handleAddBot(slot.slotIndex)}
-                          >
-                            <Bot size={14} /> + Aggiungi Bot IA
-                          </button>
-                        )}
+                        <div className="seat-art-scrim" />
+                        <div className="seat-art-top-overlay">
+                          <span className="seat-number-chip">
+                            Posto #{slot.slotIndex + 1}
+                          </span>
+                          <div className="seat-team-selector">
+                            <Shield size={12} />
+                            <select
+                              value={slot.team}
+                              disabled={!canEditSlot && !room.isHost}
+                              onChange={(e) =>
+                                handleChangeTeam(slot.slotIndex, Number(e.target.value))
+                              }
+                              title="Squadra / Team (diverso per Tutti contro Tutti)"
+                            >
+                              {[1, 2, 3, 4, 5, 6, 7, 8].map((t) => (
+                                <option key={t} value={t}>
+                                  Team {t}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="seat-art-bottom-overlay">
+                          <div className="seat-identity">
+                            {slot.type === 'REMOTE' && (
+                              <User size={15} className="cyan-icon" />
+                            )}
+                            {slot.type === 'AI' && (
+                              <Bot size={15} className="amber-icon" />
+                            )}
+                            <div>
+                              <div className="seat-player-name">
+                                {slot.name}
+                                {slot.isMe && <span className="you-tag">TU</span>}
+                              </div>
+                              <div className="seat-status-sub">
+                                {slot.type === 'REMOTE' ? (
+                                  <span
+                                    className={`conn-dot ${
+                                      slot.isOnline ? 'online' : 'offline'
+                                    }`}
+                                  >
+                                    {slot.isOnline ? '● Connesso' : '○ Riconnessione...'}
+                                  </span>
+                                ) : (
+                                  <span>Bot IA • Pronto</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {slot.colorIdentity && slot.colorIdentity.length > 0 && (
+                            <div className="seat-identity-pips">
+                              {slot.colorIdentity.map((col) => (
+                                <ManaSymbolBadge key={col} symbol={col} size="sm" />
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
 
-                    {slot.type === 'REMOTE' && (
-                      <>
-                        <div className={`ready-indicator ${slot.isReady ? 'ready' : 'not-ready'}`}>
-                          {slot.isReady ? '✓ PRONTO' : 'In preparazione...'}
+                    {/* Body for Occupied vs Open Seat */}
+                    {slot.type !== 'OPEN' ? (
+                      <div className="seat-card-body">
+                        <div className="seat-deck-info">
+                          <strong className="seat-deck-name">{slot.deckName}</strong>
+                          <span className="seat-deck-summary">{slot.deckSummary}</span>
+                          {slot.commanderCards && slot.commanderCards.length > 0 && (
+                            <div className="seat-commander-chips">
+                              {slot.commanderCards.map((cName) => (
+                                <span key={cName} className="cmd-chip">
+                                  <Crown size={11} /> {cName}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        {slot.isMe && (
+
+                        {canEditSlot && (
                           <button
                             type="button"
-                            className={slot.isReady ? 'btn-secondary btn-sm' : 'btn-primary btn-sm'}
-                            onClick={() => handleToggleReady(slot)}
+                            className="btn-secondary btn-sm full-width"
+                            onClick={() => setEditingDeckSlot(slot)}
                           >
-                            <Check size={14} />{' '}
-                            {slot.isReady ? 'Annulla Pronto' : 'Sono Pronto!'}
+                            <Layers size={13} /> Cambia / Costruisci Mazzo
                           </button>
                         )}
-                      </>
+                      </div>
+                    ) : (
+                      <div className="seat-open-body">
+                        <div className="seat-open-head">
+                          <span className="seat-number-chip">
+                            Posto #{slot.slotIndex + 1}
+                          </span>
+                          <UserPlus size={16} className="muted-icon" />
+                        </div>
+                        <p className="seat-open-hint">
+                          Posto libero per amici con codice{' '}
+                          <strong>{room.roomId}</strong> o Bot IA.
+                        </p>
+                      </div>
                     )}
 
-                    {slot.type === 'AI' && (
-                      <>
-                        <div className="ready-indicator ready">✓ BOT PRONTO</div>
-                        {room.isHost && (
-                          <button
-                            type="button"
-                            className="btn-ghost-danger btn-sm"
-                            onClick={() => handleRemoveBotOrOpen(slot.slotIndex)}
+                    {/* Seat Footer Actions */}
+                    <div className="seat-card-footer">
+                      {slot.type === 'OPEN' && (
+                        <div className="seat-open-btns">
+                          {room.mySlotIndex === -1 && (
+                            <button
+                              type="button"
+                              className="btn-primary btn-sm"
+                              onClick={() => handleClaimSeat(slot.slotIndex)}
+                            >
+                              <UserPlus size={14} /> Siediti Qui
+                            </button>
+                          )}
+                          {room.isHost && (
+                            <button
+                              type="button"
+                              className="btn-secondary btn-sm"
+                              onClick={() => handleAddBot(slot.slotIndex)}
+                            >
+                              <Bot size={14} /> + Bot IA
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {slot.type === 'REMOTE' && (
+                        <>
+                          <div
+                            className={`ready-indicator ${
+                              slot.isReady ? 'ready' : 'not-ready'
+                            }`}
                           >
-                            <Trash2 size={14} /> Rimuovi Bot
-                          </button>
-                        )}
-                      </>
-                    )}
+                            {slot.isReady ? '✓ PRONTO' : 'In preparazione...'}
+                          </div>
+                          {slot.isMe && (
+                            <button
+                              type="button"
+                              className={
+                                slot.isReady
+                                  ? 'btn-secondary btn-sm'
+                                  : 'btn-primary btn-sm'
+                              }
+                              onClick={() => handleToggleReady(slot)}
+                            >
+                              <Check size={14} />{' '}
+                              {slot.isReady ? 'Annulla' : 'Pronto!'}
+                            </button>
+                          )}
+                        </>
+                      )}
+
+                      {slot.type === 'AI' && (
+                        <>
+                          <div className="ready-indicator ready">✓ BOT PRONTO</div>
+                          {room.isHost && (
+                            <button
+                              type="button"
+                              className="btn-ghost-danger btn-sm"
+                              onClick={() => handleRemoveBotOrOpen(slot.slotIndex)}
+                            >
+                              <Trash2 size={13} /> Rimuovi
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </section>
 
-        {/* Chat & Room Invite Sidebar */}
+        {/* Always-Visible Lobby Chat & Quick Invite Sidebar */}
         <aside className="lobby-sidebar">
-          <div className="invite-info-box">
-            <h3>Invita Altri Giocatori</h3>
-            <p>
-              Condividi il codice stanza <strong>{room.roomId}</strong>{' '}
-              {room.hasPassword ? 'e la password ' : ''}con i tuoi amici. Se un giocatore aggiorna
-              la pagina, il sistema lo riconosce automaticamente e gli restituisce il suo posto e
-              la sua mano!
-            </p>
+          <div className="invite-compact-bar">
+            <div className="invite-compact-text">
+              <span className="invite-eyebrow">INVITA IL TUO GRUPPO</span>
+              <span>
+                Codice: <code>{room.roomId}</code>
+                {room.hasPassword ? ' (con password)' : ''}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              onClick={handleCopyRoomId}
+            >
+              {copiedId ? <Check size={13} /> : <Copy size={13} />}{' '}
+              {copiedId ? 'Copiato' : 'Copia'}
+            </button>
           </div>
 
-          <div className="chat-panel">
+          <div className="chat-panel always-visible-chat">
             <div className="chat-panel-header">
-              <MessageSquare size={16} /> Chat della Stanza
+              <MessageSquare size={15} className="cyan-icon" />
+              <span>Chat della Stanza</span>
+              <span className="chat-count-pill">{chatMessages.length}</span>
             </div>
             <div className="chat-messages-list" ref={chatListRef}>
               {chatMessages.length === 0 ? (
-                <div className="chat-empty">Nessun messaggio ancora. Saluta il tavolo!</div>
+                <div className="chat-empty">
+                  Nessun messaggio ancora. Saluta il tavolo o accordatevi sul
+                  livello dei mazzi!
+                </div>
               ) : (
                 chatMessages.map((m, idx) => (
                   <div
@@ -472,11 +648,15 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             <form className="chat-input-row" onSubmit={handleSendChat}>
               <input
                 type="text"
-                placeholder="Scrivi un messaggio in chat..."
+                placeholder="Scrivi in chat al tavolo..."
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
               />
-              <button type="submit" className="btn-primary btn-sm">
+              <button
+                type="submit"
+                className="btn-primary btn-sm"
+                aria-label="Invia messaggio"
+              >
                 <Send size={14} />
               </button>
             </form>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CardViewState } from '../types';
 import { ManaCostDisplay } from './ManaText';
+import { SLEEVE_THEMES, SleeveTheme } from './match/playmats';
 import {
   Maximize2,
   Shield,
@@ -31,6 +32,7 @@ export interface CardVisualProps {
   dimNonSelectable?: boolean;
   isTouchMode?: boolean;
   compact?: boolean;
+  sleeveTheme?: SleeveTheme;
 }
 
 const KEYWORD_BADGES: { match: string; icon: string; label: string }[] = [
@@ -66,6 +68,7 @@ const CardVisualInner: React.FC<CardVisualProps> = ({
   dimNonSelectable = false,
   isTouchMode = false,
   compact = false,
+  sleeveTheme = SLEEVE_THEMES[0],
 }) => {
   const [imgSrc, setImgSrc] = useState<string | null>(
     card.imageUrl || card.scryfallFallbackUrl || null
@@ -74,6 +77,8 @@ const CardVisualInner: React.FC<CardVisualProps> = ({
   const [imgFailed, setImgFailed] = useState(
     !card.imageUrl && !card.scryfallFallbackUrl
   );
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const imgRef = useRef<HTMLImageElement | null>(null);
 
   // Track Tap / Untap / Damage transitions
   const prevTappedRef = useRef<boolean>(card.tapped);
@@ -89,10 +94,22 @@ const CardVisualInner: React.FC<CardVisualProps> = ({
   const handledTouchTapRef = useRef<boolean>(false);
 
   useEffect(() => {
-    setImgSrc(card.imageUrl || card.scryfallFallbackUrl || null);
+    const nextSrc = card.imageUrl || card.scryfallFallbackUrl || null;
+    setImgSrc(nextSrc);
     setTriedFallback(false);
-    setImgFailed(!card.imageUrl && !card.scryfallFallbackUrl);
+    setImgFailed(!nextSrc);
+    setImgLoaded(false);
   }, [card.imageUrl, card.scryfallFallbackUrl, card.name]);
+
+  useEffect(() => {
+    if (
+      imgRef.current &&
+      imgRef.current.complete &&
+      imgRef.current.naturalWidth > 0
+    ) {
+      setImgLoaded(true);
+    }
+  }, [imgSrc]);
 
   useEffect(() => {
     if (prevTappedRef.current && !card.tapped) {
@@ -137,9 +154,11 @@ const CardVisualInner: React.FC<CardVisualProps> = ({
       imgSrc !== card.scryfallFallbackUrl
     ) {
       setTriedFallback(true);
+      setImgLoaded(false);
       setImgSrc(card.scryfallFallbackUrl);
     } else {
       setImgFailed(true);
+      setImgLoaded(true);
     }
   };
 
@@ -356,14 +375,54 @@ const CardVisualInner: React.FC<CardVisualProps> = ({
           card.oracleText ? `\n${card.oracleText}` : ''
         }`}
       >
-        {/* Artwork / Scryfall Image or Structured MTG Frame Fallback */}
-        {!card.hidden && !imgFailed && imgSrc ? (
+        {/* Artwork / Card Sleeve during loading or hidden / Structured MTG Frame Fallback */}
+        {card.hidden ? (
+          <div
+            className="mtg-card-sleeve is-static"
+            style={
+              {
+                '--sleeve-primary': sleeveTheme.primary,
+                '--sleeve-secondary': sleeveTheme.secondary,
+                '--sleeve-border': sleeveTheme.border,
+                '--sleeve-emblem': sleeveTheme.emblem,
+              } as React.CSSProperties
+            }
+            aria-label="Carta coperta"
+          >
+            <div className="sleeve-inner-frame">
+              <div className="sleeve-emblem-diamond">
+                <span>L</span>
+              </div>
+            </div>
+          </div>
+        ) : !imgFailed && imgSrc ? (
           <div className="mtg-card-art-wrapper">
+            {!imgLoaded && (
+              <div
+                className="mtg-card-sleeve is-loading"
+                style={
+                  {
+                    '--sleeve-primary': sleeveTheme.primary,
+                    '--sleeve-secondary': sleeveTheme.secondary,
+                    '--sleeve-border': sleeveTheme.border,
+                    '--sleeve-emblem': sleeveTheme.emblem,
+                  } as React.CSSProperties
+                }
+              >
+                <div className="sleeve-inner-frame">
+                  <div className="sleeve-emblem-diamond">
+                    <span>L</span>
+                  </div>
+                </div>
+              </div>
+            )}
             <img
+              ref={imgRef}
               src={imgSrc}
               alt={card.name}
-              className="mtg-card-img"
+              className={`mtg-card-img ${imgLoaded ? 'is-loaded' : 'is-loading'}`}
               loading="lazy"
+              onLoad={() => setImgLoaded(true)}
               onError={handleImgError}
             />
             {inHand && card.manaCost && (
@@ -378,10 +437,8 @@ const CardVisualInner: React.FC<CardVisualProps> = ({
         ) : (
           <div className="mtg-card-fallback">
             <div className="mtg-card-header">
-              <span className="mtg-card-title">
-                {card.hidden ? 'Carta Coperta' : card.name}
-              </span>
-              {!card.hidden && <ManaCostDisplay text={card.manaCost} size="sm" />}
+              <span className="mtg-card-title">{card.name}</span>
+              <ManaCostDisplay text={card.manaCost} size="sm" />
             </div>
             <div className="mtg-card-art-placeholder">
               {card.commander ? (
@@ -390,19 +447,15 @@ const CardVisualInner: React.FC<CardVisualProps> = ({
                 <Sparkles size={15} className="placeholder-icon" />
               )}
               <span className="mtg-card-type-line">
-                {card.hidden
-                  ? 'Mistero'
-                  : card.type || (card.token ? 'Pedina' : 'Magia')}
+                {card.type || (card.token ? 'Pedina' : 'Magia')}
               </span>
             </div>
-            {!card.hidden && (
-              <div className="mtg-card-textbox">
-                {card.oracleText
-                  ? card.oracleText.slice(0, 100) +
-                    (card.oracleText.length > 100 ? '…' : '')
-                  : ''}
-              </div>
-            )}
+            <div className="mtg-card-textbox">
+              {card.oracleText
+                ? card.oracleText.slice(0, 100) +
+                  (card.oracleText.length > 100 ? '…' : '')
+                : ''}
+            </div>
           </div>
         )}
 
